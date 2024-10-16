@@ -27,7 +27,7 @@ data_transform = transforms.Compose([transforms.Resize((IMAGE_SIZE, IMAGE_SIZE))
 
 diagnosis_list = ['Normal', 'Diabetes', 'Glaucoma', 'Cataract', 'Age', 'Hypertension', 'Pathological Myopia', 'Other']
 
-class OcularDiseaseDataset(Dataset):
+class RetinaDiseaseDataset(Dataset):
     def __init__(self, csv_file, root_dir, transform=None):
         self.df = pd.read_csv(csv_file) 
         self.transform = transform 
@@ -67,7 +67,7 @@ class OcularDiseaseDataset(Dataset):
         
         return image, label
 
-dataset = OcularDiseaseDataset(
+dataset = RetinaDiseaseDataset(
     csv_path,
     train_path,
     data_transform
@@ -77,13 +77,13 @@ class RetinaDiseaseClassifier(nn.Module):
     def __init__(self, num_classes=8):
         super(RetinaDiseaseClassifier, self).__init__()
         # Where we define all the parts of the model
-        self.base_model = timm.create_model('efficientnet_b0', pretrained=True)
+        self.base_model = timm.create_model('resnet50', pretrained=True)
         self.features = nn.Sequential(*list(self.base_model.children())[:-1])
 
-        enet_out_size = 1280
+        out_size = 2048
         self.classifier = nn.Sequential(
             nn.Flatten(),
-            nn.Linear(enet_out_size, num_classes)
+            nn.Linear(out_size, num_classes)
         )
     
     def forward(self, x):
@@ -108,8 +108,11 @@ test_loader = DataLoader(test_subset, batch_size=32, shuffle=False)
 
 model = RetinaDiseaseClassifier(num_classes=8)
 
+# load model
+model.load_state_dict(torch.load('../models/retinai_resnet50_0.0.1.pth'))
+
 # Simple training loop
-num_epochs = 1
+num_epochs = 3
 train_losses, val_losses = [], []
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -148,3 +151,7 @@ for epoch in range(num_epochs):
     val_loss = running_loss / len(val_loader.dataset)
     val_losses.append(val_loss)
     print(f"Epoch {epoch+1}/{num_epochs} - Train loss: {train_loss}, Validation loss: {val_loss}")
+
+model_path = '../models/'
+model_path = os.path.join(model_path, 'retinai_resnet50_0.0.1.pth')
+torch.save(model.state_dict(), model_path)

@@ -1,20 +1,13 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader, random_split
-import torchvision
+from torch.utils.data import DataLoader, random_split
 import torchvision.transforms as transforms
-from torchvision.datasets import ImageFolder
-import timm
-
-import matplotlib.pyplot as plt # For data viz
+import matplotlib.pyplot as plt 
 import pandas as pd
 import numpy as np
-import sys
 import os
 from tqdm import tqdm
-
-from PIL import Image
 
 from RetinaDiseaseDataset import RetinaDiseaseDataset
 from RetinaDiseaseClassifier import RetinaDiseaseClassifier
@@ -38,8 +31,6 @@ dataset = RetinaDiseaseDataset(
     data_transform
 )
     
-
-
 # Calculate the lengths for the splits
 total_size = len(dataset)
 train_size = int(0.7 * total_size)

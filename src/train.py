@@ -14,7 +14,6 @@ from RetinaDiseaseClassifier import RetinaDiseaseClassifier
 
 train_csv='../data/csvs/train.csv'
 val_csv='../data/csvs/val.csv'
-test_csv='../data/csvs/test.csv'
 
 image_path='../data/ocular-disease-recognition-odir5k/ODIR-5K/Training Images'
 
@@ -35,17 +34,9 @@ val_dataset = RetinaDiseaseDataset(
     data_transform
 )
 
-# Unused
-test_dataset = RetinaDiseaseDataset(
-    test_csv,
-    image_path,
-    data_transform
-)
-
 # Create DataLoaders for each subset
 train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
 val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False)
-test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False) # Unused
 
 model = RetinaDiseaseClassifier(num_classes=8)
 
@@ -53,7 +44,7 @@ model = RetinaDiseaseClassifier(num_classes=8)
 model.load_state_dict(torch.load('../models/retinai_resnet50_0.0.1.pth'))
 
 # Simple training loop
-num_epochs = 1
+num_epochs = 3
 train_losses, val_losses = [], []
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -96,3 +87,9 @@ for epoch in range(num_epochs):
 model_path = '../models/'
 model_path = os.path.join(model_path, 'retinai_resnet50_0.0.1.pth')
 torch.save(model.state_dict(), model_path)
+
+plt.plot(train_losses, label='Training loss')
+plt.plot(val_losses, label='Validation loss')
+plt.legend()
+plt.title("Loss over epochs")
+plt.show()

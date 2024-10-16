@@ -12,6 +12,8 @@ df = df[df['Patient Age'] >= 5]
 train_df, temp_df = train_test_split(df, test_size=0.30, random_state=42) 
 val_df, test_df = train_test_split(temp_df, test_size=0.50, random_state=42)  
 
+# Add code to check for duplicate file names in any of the dfs
+
 # Save dataframes to CSV files
 train_df.to_csv('./csvs/train.csv', index=False)
 val_df.to_csv('./csvs/val.csv', index=False)

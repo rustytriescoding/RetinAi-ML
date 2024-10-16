@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, random_split
 import torchvision
 import torchvision.transforms as transforms
 from torchvision.datasets import ImageFolder
@@ -12,7 +12,7 @@ import pandas as pd
 import numpy as np
 import sys
 import os
-from tqdm.notebook import tqdm
+from tqdm import tqdm
 
 from PIL import Image
 
@@ -67,18 +67,11 @@ class OcularDiseaseDataset(Dataset):
         
         return image, label
 
-train_dataset = OcularDiseaseDataset(
+dataset = OcularDiseaseDataset(
     csv_path,
     train_path,
     data_transform
 )
-
-image, label = train_dataset[16]
-
-train_dataloader = DataLoader(train_dataset, batch_size=32, shuffle=True)
-
-for images, labels in train_dataloader:
-    break
     
 class RetinaDiseaseClassifier(nn.Module):
     def __init__(self, num_classes=8):
@@ -98,5 +91,60 @@ class RetinaDiseaseClassifier(nn.Module):
         output = self.classifier(x)
         return output
     
+
+# Calculate the lengths for the splits
+total_size = len(dataset)
+train_size = int(0.7 * total_size)
+val_size = int(0.15 * total_size)
+test_size = total_size - train_size - val_size  # Remaining data for testing
+
+# Split the dataset into train, validation, and test sets
+train_subset, val_subset, test_subset = random_split(dataset, [train_size, val_size, test_size])
+
+# Create DataLoaders for each subset
+train_loader = DataLoader(train_subset, batch_size=32, shuffle=True)
+val_loader = DataLoader(val_subset, batch_size=32, shuffle=False)
+test_loader = DataLoader(test_subset, batch_size=32, shuffle=False)
+
 model = RetinaDiseaseClassifier(num_classes=8)
-print(str(model)[:500])
+
+# Simple training loop
+num_epochs = 1
+train_losses, val_losses = [], []
+
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+model.to(device)
+
+criterion = nn.CrossEntropyLoss()
+optimizer = optim.Adam(model.parameters(), lr=0.001)
+
+for epoch in range(num_epochs):
+    # Training
+    model.train()
+    running_loss = 0.0
+    for images, labels in tqdm(train_loader, desc='Training loop'):
+        images, labels = images.to(device), labels.to(device)
+        
+        optimizer.zero_grad()
+        outputs = model(images)
+        loss = criterion(outputs, labels)
+        loss.backward()
+        optimizer.step()
+        running_loss += loss.item() * labels.size(0)
+    train_loss = running_loss / len(train_loader.dataset)
+    train_losses.append(train_loss)
+    
+    # Validation
+    model.eval()
+    running_loss = 0.0
+    with torch.no_grad():
+        for images, labels in tqdm(val_loader, desc='Validation loop'):
+            images, labels = images.to(device), labels.to(device)
+         
+            outputs = model(images)
+            loss = criterion(outputs, labels)
+            running_loss += loss.item() * labels.size(0)
+    val_loss = running_loss / len(val_loader.dataset)
+    val_losses.append(val_loss)
+    print(f"Epoch {epoch+1}/{num_epochs} - Train loss: {train_loss}, Validation loss: {val_loss}")

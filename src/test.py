@@ -9,7 +9,7 @@ from RetinaDiseaseClassifier import RetinaDiseaseClassifier
 test_csv = '../data/csvs/test.csv'
 image_path = '../data/ocular-disease-recognition-odir5k/ODIR-5K/Training Images'
 
-IMAGE_SIZE = 128
+IMAGE_SIZE = 224
 data_transform = transforms.Compose([transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)), transforms.ToTensor()])
 
 test_dataset = RetinaDiseaseDataset(

@@ -17,7 +17,7 @@ val_csv='../data/csvs/val.csv'
 
 image_path='../data/ocular-disease-recognition-odir5k/ODIR-5K/Training Images'
 
-IMAGE_SIZE = 128
+IMAGE_SIZE = 224 # Change depending on model!
 data_transform = transforms.Compose([
     transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)), 
     transforms.RandomHorizontalFlip(),
@@ -44,15 +44,17 @@ val_dataset = RetinaDiseaseDataset(
 train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
 val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False)
 
-model = RetinaDiseaseClassifier(num_classes=8, base_model='resnet18')
+base_model='efficientnet_b4'
+
+model = RetinaDiseaseClassifier(num_classes=8, base_model=base_model)
 
 # load model
-retinai_resnet50_path='../models/resnet50/retinai_resnet50_0.0.1.pth'
-retinai_resnet18_path='../models/resnet18/retinai_resnet18_0.0.1.pth'
-model.load_state_dict(torch.load(retinai_resnet18_path, weights_only=False))
+retinai_model_path=f'../models/{base_model}/retinai_{base_model}_0.0.1.pth'
+
+# model.load_state_dict(torch.load(retinai_model_path, weights_only=False))
 
 # Simple training loop
-num_epochs = 5
+num_epochs = 10
 train_losses, val_losses = [], []
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -60,7 +62,11 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 model.to(device)
 
 criterion = nn.CrossEntropyLoss()
-optimizer = optim.Adam(model.parameters(), lr=0.0001, weight_decay=1e-4)
+optimizer = optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-4)
+
+patience = 3
+best_val_loss = np.inf  
+patience_counter = 0 
 
 for epoch in range(num_epochs):
     # Training
@@ -90,10 +96,23 @@ for epoch in range(num_epochs):
             running_loss += loss.item() * labels.size(0)
     val_loss = running_loss / len(val_loader.dataset)
     val_losses.append(val_loss)
+    
     print(f"Epoch {epoch+1}/{num_epochs} - Train loss: {train_loss}, Validation loss: {val_loss}")
+    
+    # Early stopping
+    if val_loss < best_val_loss:
+        best_val_loss = val_loss 
+        patience_counter = 0  
+    else:
+        patience_counter += 1  
+    
+    # Stop training if patience is exceeded
+    if patience_counter >= patience:
+        print(f"Early stopping at epoch {epoch+1}")
+        break
 
-model_path = '../models/resnet18/'
-model_path = os.path.join(model_path, 'retinai_resnet18_0.0.1.pth')
+model_path = f'../models/{base_model}/'
+model_path = os.path.join(model_path, f'retinai_{base_model}_0.0.1.pth')
 torch.save(model.state_dict(), model_path)
 
 plt.plot(train_losses, label='Training loss')

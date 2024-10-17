@@ -14,6 +14,7 @@ class RetinaDiseaseClassifier(nn.Module):
         output_sizes = {
             'resnet18': 512,
             'resnet50': 2048,
+            'efficientnet_b4': 1792
         }
         
         if base_model in output_sizes:

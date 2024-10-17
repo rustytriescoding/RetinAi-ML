@@ -20,8 +20,11 @@ test_dataset = RetinaDiseaseDataset(
 
 test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)
 
-model = RetinaDiseaseClassifier(num_classes=8)
-model.load_state_dict(torch.load('../models/retinai_resnet50_0.0.1.pth'))
+model = RetinaDiseaseClassifier(num_classes=8, base_model='resnet18')
+
+retinai_resnet50_path='../models/resnet50/retinai_resnet50_0.0.1.pth'
+retinai_resnet18_path='../models/resnet18/retinai_resnet18_0.0.1.pth'
+model.load_state_dict(torch.load(retinai_resnet18_path, weights_only=False))
 model.eval()
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")

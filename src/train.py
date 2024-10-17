@@ -18,7 +18,13 @@ val_csv='../data/csvs/val.csv'
 image_path='../data/ocular-disease-recognition-odir5k/ODIR-5K/Training Images'
 
 IMAGE_SIZE = 128
-data_transform = transforms.Compose([transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)), transforms.ToTensor()])
+data_transform = transforms.Compose([
+    transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)), 
+    transforms.RandomHorizontalFlip(),
+    transforms.RandomVerticalFlip(),
+    transforms.RandomRotation(10), 
+    transforms.ToTensor()
+])
 
 diagnosis_list = ['Normal', 'Diabetes', 'Glaucoma', 'Cataract', 'Age', 'Hypertension', 'Pathological Myopia', 'Other']
 
@@ -38,13 +44,15 @@ val_dataset = RetinaDiseaseDataset(
 train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
 val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False)
 
-model = RetinaDiseaseClassifier(num_classes=8)
+model = RetinaDiseaseClassifier(num_classes=8, base_model='resnet18')
 
 # load model
-model.load_state_dict(torch.load('../models/retinai_resnet50_0.0.1.pth'))
+retinai_resnet50_path='../models/resnet50/retinai_resnet50_0.0.1.pth'
+retinai_resnet18_path='../models/resnet18/retinai_resnet18_0.0.1.pth'
+model.load_state_dict(torch.load(retinai_resnet18_path, weights_only=False))
 
 # Simple training loop
-num_epochs = 3
+num_epochs = 5
 train_losses, val_losses = [], []
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -52,7 +60,7 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 model.to(device)
 
 criterion = nn.CrossEntropyLoss()
-optimizer = optim.Adam(model.parameters(), lr=0.001)
+optimizer = optim.Adam(model.parameters(), lr=0.0001, weight_decay=1e-4)
 
 for epoch in range(num_epochs):
     # Training
@@ -84,8 +92,8 @@ for epoch in range(num_epochs):
     val_losses.append(val_loss)
     print(f"Epoch {epoch+1}/{num_epochs} - Train loss: {train_loss}, Validation loss: {val_loss}")
 
-model_path = '../models/'
-model_path = os.path.join(model_path, 'retinai_resnet50_0.0.1.pth')
+model_path = '../models/resnet18/'
+model_path = os.path.join(model_path, 'retinai_resnet18_0.0.1.pth')
 torch.save(model.state_dict(), model_path)
 
 plt.plot(train_losses, label='Training loss')

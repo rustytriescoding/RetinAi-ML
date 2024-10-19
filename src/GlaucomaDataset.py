@@ -5,7 +5,7 @@ import pandas as pd
 from PIL import Image
 
 
-class RetinaDiseaseDataset(Dataset):
+class GlaucomaDataset(Dataset):
     def __init__(self, csv_file, root_dir, transform=None):
         self.df = pd.read_csv(csv_file) 
         self.transform = transform 
@@ -14,13 +14,13 @@ class RetinaDiseaseDataset(Dataset):
         # Define a mapping from string labels to integers
         self.label_mapping = {
             "N": 0,  # Normal
-            "D": 1,  # Diabetes
-            "G": 2,  # Glaucoma
-            "C": 3,  # Cataract
-            "A": 4,  # Age-related Macular Degeneration
-            "H": 5,  # Hypertension
-            "M": 6,  # Pathological Myopia
-            "O": 7   # Other diseases/abnormalities
+            "D": 2,  # Diabetes
+            "G": 1,  # Glaucoma
+            "C": 2,  # Cataract
+            "A": 2,  # Age-related Macular Degeneration
+            "H": 2,  # Hypertension
+            "M": 2,  # Pathological Myopia
+            "O": 2   # Other diseases/abnormalities
         }
 
     def __len__(self):

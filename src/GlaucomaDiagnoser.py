@@ -1,10 +1,9 @@
-import torch
 import torch.nn as nn
 import timm
 
-class RetinaDiseaseClassifier(nn.Module):
-    def __init__(self, num_classes=8, base_model='resnet50'):
-        super(RetinaDiseaseClassifier, self).__init__()
+class GlaucomaDiagnoser(nn.Module):
+    def __init__(self, num_classes=3, base_model='resnet18'):
+        super(GlaucomaDiagnoser, self).__init__()
         self.base_model = timm.create_model(base_model, pretrained=True)
         self.features = nn.Sequential(
             *list(self.base_model.children())[:-1],
@@ -26,7 +25,7 @@ class RetinaDiseaseClassifier(nn.Module):
             nn.Flatten(),
             nn.Linear(out_size, 512),
             nn.ReLU(),
-            nn.Dropout(0.5),
+            nn.Dropout(0.3),
             nn.Linear(512, num_classes)
         )
     

@@ -3,16 +3,16 @@ import pandas as pd
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 import torchvision.transforms as transforms
-from RetinaDiseaseDataset import RetinaDiseaseDataset
-from RetinaDiseaseClassifier import RetinaDiseaseClassifier
+from GlaucomaDataset import GlaucomaDataset
+from GlaucomaDiagnoser import GlaucomaDiagnoser
 
 test_csv = '../data/csvs/test.csv'
-image_path = '../data/ocular-disease-recognition-odir5k/ODIR-5K/Training Images'
+image_path = '../data/ODIR-5K/Training Images'
 
 IMAGE_SIZE = 224
 data_transform = transforms.Compose([transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)), transforms.ToTensor()])
 
-test_dataset = RetinaDiseaseDataset(
+test_dataset = GlaucomaDataset(
     test_csv,
     image_path,
     data_transform
@@ -20,7 +20,7 @@ test_dataset = RetinaDiseaseDataset(
 
 test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)
 
-model = RetinaDiseaseClassifier(num_classes=8, base_model='resnet18')
+model = GlaucomaDiagnoser(num_classes=3, base_model='resnet18')
 
 retinai_resnet50_path='../models/resnet50/retinai_resnet50_0.0.1.pth'
 retinai_resnet18_path='../models/resnet18/retinai_resnet18_0.0.1.pth'

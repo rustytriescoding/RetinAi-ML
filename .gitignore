@@ -1,5 +1,7 @@
 venv/
-data/ocular-disease-recognition-odir5k/
+data/ODIR-5K
 models/
 
 __pycache__/
+
+.vscode

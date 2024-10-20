@@ -18,12 +18,19 @@ def main():
     image_path='../data/ODIR-5K/Training Images'
 
     IMAGE_SIZE = 224
-    data_transform = transforms.Compose([
+    train_transform = transforms.Compose([
         transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)), 
-        transforms.RandomHorizontalFlip(),
-        transforms.RandomVerticalFlip(),
+        transforms.RandomApply([transforms.RandomHorizontalFlip()], p=0.2),
+        transforms.RandomApply([transforms.RandomVerticalFlip()], p=0.2),
         transforms.RandomRotation(10), 
-        transforms.ToTensor()
+        transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229]),
+    ])
+
+    val_transform = transforms.Compose([
+        transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)), 
+        transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229]),
     ])
 
     diagnosis_list = ['Normal', 'Diabetes', 'Glaucoma', 'Cataract', 'Age', 'Hypertension', 'Pathological Myopia', 'Other']
@@ -31,22 +38,22 @@ def main():
     train_dataset = GlaucomaDataset(
         train_csv,
         image_path,
-        data_transform
+        train_transform
     )
         
     val_dataset = GlaucomaDataset(
         val_csv,
         image_path,
-        data_transform
+        val_transform
     )
 
     # Create DataLoaders for each subset
-    train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True, pin_memory=True, num_workers=4)
-    val_loader = DataLoader(val_dataset, batch_size=64, shuffle=False, pin_memory=True, num_workers=4)
+    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True, pin_memory=False, num_workers=6)
+    val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False, pin_memory=False, num_workers=6)
 
-    base_model='resnet18'
+    base_model='efficientnet_b0'
 
-    model = GlaucomaDiagnoser(num_classes=3, base_model=base_model)
+    model = GlaucomaDiagnoser(num_classes=2, base_model=base_model)
 
     # load model
     retinai_model_path=f'../models/{base_model}/retinai_{base_model}_0.0.1.pth'
@@ -54,7 +61,7 @@ def main():
     # model.load_state_dict(torch.load(retinai_model_path, weights_only=False))
 
     # Simple training loop
-    num_epochs = 20
+    num_epochs = 50
     train_losses, val_losses = [], []
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -62,7 +69,7 @@ def main():
     model.to(device)
 
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=0.0001, weight_decay=1e-4)
+    optimizer = optim.Adam(model.parameters(), lr=0.0001, weight_decay=1e-5)
 
     patience = 3
     best_val_loss = np.inf  
@@ -131,6 +138,7 @@ def main():
     model_path = f'../models/{base_model}/'
     model_path = os.path.join(model_path, f'retinai_{base_model}_0.0.1.pth')
     torch.save(model.state_dict(), model_path)
+    print('Saving model:', model_path)
 
     plt.plot(train_losses, label='Training loss')
     plt.plot(val_losses, label='Validation loss')

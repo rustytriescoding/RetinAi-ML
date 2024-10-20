@@ -14,13 +14,13 @@ class GlaucomaDataset(Dataset):
         # Define a mapping from string labels to integers
         self.label_mapping = {
             "N": 0,  # Normal
-            "D": 2,  # Diabetes
+            # "D": 2,  # Diabetes
             "G": 1,  # Glaucoma
-            "C": 2,  # Cataract
-            "A": 2,  # Age-related Macular Degeneration
-            "H": 2,  # Hypertension
-            "M": 2,  # Pathological Myopia
-            "O": 2   # Other diseases/abnormalities
+            # "C": 2,  # Cataract
+            # "A": 2,  # Age-related Macular Degeneration
+            # "H": 2,  # Hypertension
+            # "M": 2,  # Pathological Myopia
+            # "O": 2   # Other diseases/abnormalities
         }
 
     def __len__(self):

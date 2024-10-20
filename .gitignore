@@ -1,5 +1,7 @@
 venv/
 data/ODIR-5K
+data/ACRIMA
+data/Glaucoma Images
 models/
 
 __pycache__/

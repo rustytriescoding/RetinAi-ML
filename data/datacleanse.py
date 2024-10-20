@@ -21,8 +21,17 @@ print(len(df))
 df = df[df['labels'] != "['C']"]
 print(len(df))
 
-# Split the dataframes into 70% training, 15% validation, and 15% testing sets
-train_df, temp_df = train_test_split(df, test_size=0.30, random_state=42) 
+# Remove other diagnosis N,D,G,C,A,H,M,O
+df = df[df['labels'] != "['D']"]
+df = df[df['labels'] != "['A']"]
+df = df[df['labels'] != "['H']"]
+df = df[df['labels'] != "['M']"]
+df = df[df['labels'] != "['O']"]
+print(len(df))
+
+
+# Split the dataframes into 80% training, 10% validation, and 10% testing sets
+train_df, temp_df = train_test_split(df, test_size=0.20, random_state=42) 
 val_df, test_df = train_test_split(temp_df, test_size=0.50, random_state=42)  
 
 # Save dataframes to CSV files

@@ -115,7 +115,14 @@ def main():
         val_losses.append(val_loss)
         
         print(f"Epoch {epoch+1}/{num_epochs} - Train loss: {train_loss}, Validation loss: {val_loss}")
-        
+
+        # Early stopping
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss 
+            patience_counter = 0
+        else:
+            patience_counter += 1
+
         if patience_counter >= patience:
             print(f"Early stopping at epoch {epoch+1}")
             break

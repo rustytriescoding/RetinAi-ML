@@ -17,8 +17,8 @@ df = df[~(
 )]
 print(len(df))
 
-# Remove glaucoma diagnosis
-df = df[df['labels'] != "['G']"]
+# Remove cataracts diagnosis
+df = df[df['labels'] != "['C']"]
 print(len(df))
 
 # Split the dataframes into 70% training, 15% validation, and 15% testing sets

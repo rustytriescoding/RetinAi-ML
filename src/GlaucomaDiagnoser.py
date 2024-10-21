@@ -2,13 +2,12 @@ import torch.nn as nn
 import timm
 
 class GlaucomaDiagnoser(nn.Module):
-    def __init__(self, num_classes=2, base_model='resnet18'):
+    def __init__(self, num_classes=2, base_model='efficientnet_b0'):
         super(GlaucomaDiagnoser, self).__init__()
         self.base_model = timm.create_model(base_model, pretrained=True)
 
-        # Freeze only the first few layers
-        for name, param in self.base_model.named_parameters():
-            # if 'layer1' in name or 'layer2' in name:  # Example: freeze layers 1 and 2
+        # Freeze layers
+        for _, param in self.base_model.named_parameters():
             param.requires_grad = False
 
         self.features = nn.Sequential(
@@ -30,9 +29,9 @@ class GlaucomaDiagnoser(nn.Module):
 
         self.classifier = nn.Sequential(
             nn.Flatten(),
-            nn.Linear(out_size, 8),
+            nn.Linear(out_size, 32),
             nn.ReLU(),
-            nn.Linear(8, num_classes)
+            nn.Linear(32, num_classes)
         )
     
     def forward(self, x):

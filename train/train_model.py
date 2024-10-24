@@ -123,7 +123,6 @@ class GlaucomaModelTrainer:
         self.checkpointer = ModelCheckpointer(
             save_dir='model_checkpoints',
             model_name=f"glaucoma_{self.params['base_model']}",
-            
         )
 
     def get_transforms(self, is_training=True):
@@ -334,6 +333,7 @@ class GlaucomaModelTrainer:
 
 def main():
     # Train model
+    print('First training model')
     trainer = GlaucomaModelTrainer(
         train_csvs=['../data/dataset1/csvs/train.csv',
                     '../data/dataset2/csvs/train.csv'],
@@ -354,23 +354,26 @@ def main():
     trainer.plot_training_history()
     
     # Fine tune model
-    # print('Fine tuning')
-    # finetuner = GlaucomaModelTrainer(
-    #     train_csv='../data/csvs/train.csv',
-    #     val_csv='../data/csvs/val.csv',
-    #     image_path='../data/Cropped Images',
-    #     checkpoint_path='model_checkpoints/glaucoma_efficientnet_b0_best.pth', 
-    #     batch_size=16,  
-    #     num_epochs=50,  
-    #     patience=10,
-    #     base_model='efficientnet_b0', 
-    #     lr=0.0001,  
-    #     wd=0.01,
-    #     image_size=256,
-    #     freeze_blocks=6
-    # )
-    # finetuner.train()
-    # finetuner.plot_training_history()
+    print('Fine tuning model')
+    finetuner = GlaucomaModelTrainer(
+        train_csvs=['../data/dataset1/csvs/train.csv',
+                    '../data/dataset2/csvs/train.csv'],
+        val_csvs=['../data/dataset1/csvs/val.csv',
+                  '../data/dataset2/csvs/val.csv'],
+        image_paths=['../data/dataset1/processed',
+                    '../data/dataset2/processed'],
+        checkpoint_path='model_checkpoints/glaucoma_efficientnet_b0_best.pth', 
+        batch_size=16,  
+        num_epochs=50,  
+        patience=10,
+        base_model='efficientnet_b0', 
+        lr=0.0001,  
+        wd=0.01,
+        image_size=256,
+        freeze_blocks=6
+    )
+    finetuner.train()
+    finetuner.plot_training_history()
 
 if __name__ == '__main__':
     main()

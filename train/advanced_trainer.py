@@ -16,7 +16,6 @@ class AdvancedGlaucomaTrainer:
         self.best_val_acc = 0
         
     def train_with_cross_validation(self, k_folds=5):
-        # Combine train and val datasets for CV
         train_dataset = GlaucomaDataset(
             self.base_trainer.train_csv, 
             self.base_trainer.image_path,
@@ -34,10 +33,8 @@ class AdvancedGlaucomaTrainer:
         for fold, (train_ids, val_ids) in enumerate(kfold.split(full_dataset)):
             print(f'Training Fold {fold + 1}/{k_folds}')
             
-            # Create fold-specific trainer
             fold_trainer = deepcopy(self.base_trainer)
             
-            # Modify dataloaders for this fold
             train_subsampler = torch.utils.data.SubsetRandomSampler(train_ids)
             val_subsampler = torch.utils.data.SubsetRandomSampler(val_ids)
             
@@ -57,10 +54,8 @@ class AdvancedGlaucomaTrainer:
                 pin_memory=True
             )
             
-            # Train the fold
             fold_trainer.train()
             
-            # Save the model if it's the best so far
             _, metrics = fold_trainer.validate()
             if metrics['accuracy'] > self.best_val_acc:
                 self.best_val_acc = metrics['accuracy']
@@ -95,9 +90,7 @@ class AdvancedGlaucomaTrainer:
         
         return np.array(all_predictions), np.array(all_labels)
 
-# Usage example
 def train_advanced_model():
-    # Initialize base trainer with optimal parameters
     base_trainer = GlaucomaModelTrainer(
         train_csv='../data/csvs/train.csv',
         val_csv='../data/csvs/val.csv',
@@ -105,20 +98,17 @@ def train_advanced_model():
         batch_size=16,
         num_epochs=50,
         patience=10,
-        base_model='efficientnet_b2',  # Using a stronger base model
+        base_model='efficientnet_b2',  
         lr=0.0005,
         wd=0.01,
         image_size=380,
         dropout_rate=0.3
     )
     
-    # Create advanced trainer
     advanced_trainer = AdvancedGlaucomaTrainer(base_trainer)
     
-    # Train with cross-validation
     advanced_trainer.train_with_cross_validation(k_folds=5)
     
-    # Create test dataset and loader
     test_transform = base_trainer.get_transforms(is_training=False)
     test_dataset = GlaucomaDataset(
         '../data/csvs/test.csv',
@@ -132,10 +122,8 @@ def train_advanced_model():
         num_workers=4
     )
     
-    # Get ensemble predictions
     predictions, labels = advanced_trainer.ensemble_predict(test_loader)
     
-    # Calculate accuracy
     accuracy = np.mean(predictions == labels) * 100
     print(f'Ensemble Model Test Accuracy: {accuracy:.2f}%')
 

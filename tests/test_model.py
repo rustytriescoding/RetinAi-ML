@@ -164,23 +164,19 @@ class GlaucomaModelTester:
 
 def main():
     test_csvs = [
-        '../data/csvs/test5050.csv',
-        '../data/csvs/testonly-N.csv',
-        '../data/csvs/testonly-G.csv'
+        '../data/dataset1/csvs/test.csv',
     ]
 
     tester = GlaucomaModelTester(
         model_path='../train/model_checkpoints/glaucoma_efficientnet_b0_best.pth',
-        # model_path='../models/efficientnet_b0/retinai_efficientnet_b0_0.1.1.pth',
-        image_path='../data/Cropped Images',
+        image_path='../data/dataset1/processed',
         test_csvs=test_csvs,
         base_model='efficientnet_b0',
         image_size=256,
-        # image_size=224,
         batch_size=32
     )
     
-    results = tester.run_tests()
+    tester.run_tests()
 
 if __name__ == '__main__':
     main()

@@ -345,10 +345,10 @@ def main():
         num_epochs=100,
         patience=15,
         base_model='efficientnet_b0',
-        lr=0.003,
-        wd=0.05,
+        lr=0.01,
+        wd=0.005,
         image_size=256,
-        freeze_blocks=7
+        freeze_blocks=6
     )
     trainer.train()
     trainer.plot_training_history()

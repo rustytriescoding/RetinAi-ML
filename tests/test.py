@@ -6,57 +6,70 @@ import torchvision.transforms as transforms
 
 from sys import path
 path.append('../src')
-from GlaucomaDataset import GlaucomaDataset
-from GlaucomaDiagnoser import GlaucomaDiagnoser
+from glaucoma_dataset import GlaucomaDataset
+from glaucoma_model import GlaucomaDiagnoser
+
+# mean = [0.485, 0.456, 0.406]
+# std = [0.229, 0.224, 0.225]
+mean = [0.21161936893269484, 0.0762942479204578, 0.02436706896535593]
+std = [0.1694396363130937, 0.07732758785821338, 0.02954764478795169]
+
+base_model = 'efficientnet_b0'
+model = GlaucomaDiagnoser(num_classes=2, base_model=base_model)
+
+checkpoint = torch.load('../train/model_checkpoints/glaucoma_efficientnet_b0_best.pth', weights_only=False)
+model.load_state_dict(checkpoint['model_state_dict'])
+    
+model.eval()
+
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+model.to(device)
 
 def main():
-    test_csv = '../data/csvs/test.csv'
-    image_path = '../data/ODIR-5K/Training Images'
+    csvs = [
+        '../data/csvs/test5050.csv',
+        '../data/csvs/testonly-N.csv',
+        '../data/csvs/testonly-G.csv'
+    ]
+    
+    image_path = '../data/Cropped Images'
 
-    IMAGE_SIZE = 224
-    data_transform = transforms.Compose([transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)), transforms.ToTensor()])
+    IMAGE_SIZE = 256
+    data_transform = transforms.Compose([
+        transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)), 
+        transforms.ToTensor(),
+        transforms.Normalize(mean, std)
+    ])
 
-    test_dataset = GlaucomaDataset(
-        test_csv,
-        image_path,
-        data_transform
-    )
+    for csv in csvs:
+        test_dataset = GlaucomaDataset(
+            csv,
+            image_path,
+            data_transform
+        )
 
-    test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False, pin_memory=False, num_workers=6)
+        test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False, pin_memory=False, num_workers=2)
 
-    model = 'efficientnet_b0'
-    model = GlaucomaDiagnoser(num_classes=2, base_model=model)
+        correct = 0
+        total = 0
+        predictions = []
+        actuals = []
 
-    retinai_resnet50_path='../models/resnet50/retinai_resnet50_0.0.1.pth'
-    retinai_efficientnet_b0_path='../models/efficientnet_b0/retinai_efficientnet_b0_0.0.1.pth'
+        with torch.no_grad():
+            for images, labels in tqdm(test_loader, desc="Testing"):
+                images, labels = images.to(device), labels.to(device)
+                outputs = model(images)
+                _, predicted = torch.max(outputs.data, 1)
+                
 
-    model_path = retinai_efficientnet_b0_path
-    model.load_state_dict(torch.load(model_path, weights_only=False))
-    model.eval()
+                predictions.extend(predicted.cpu().numpy())
+                actuals.extend(labels.cpu().numpy())
 
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    model.to(device)
+                total += labels.size(0)
+                correct += (predicted == labels).sum().item()
 
-    correct = 0
-    total = 0
-    predictions = []
-    actuals = []
-
-    with torch.no_grad():
-        for images, labels in tqdm(test_loader, desc="Testing"):
-            images, labels = images.to(device), labels.to(device)
-            
-            outputs = model(images)
-            _, predicted = torch.max(outputs.data, 1)
-
-            predictions.extend(predicted.cpu().numpy())
-            actuals.extend(labels.cpu().numpy())
-
-            total += labels.size(0)
-            correct += (predicted == labels).sum().item()
-
-    accuracy = 100 * correct / total
-    print(f'Accuracy of the model on the test dataset: {accuracy:.2f}%')
+        accuracy = 100 * correct / total
+        print(f'Accuracy of the model on the {csv} dataset: {accuracy:.2f}% ')
 
 if __name__ == '__main__':
     main()

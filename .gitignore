@@ -1,10 +1,17 @@
+# Virtual env
 venv/
-data/ODIR-5K
-data/ACRIMA
-data/Glaucoma Images
-data/Cropped Images
+
+# Data
+data/dataset1
+data/dataset2
+
+# Models
 models/
+train/model_checkpoints
 
+# Test results
+tests/test_results
+
+# Misc
 __pycache__/
-
 .vscode

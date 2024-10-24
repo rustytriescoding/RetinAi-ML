@@ -97,6 +97,7 @@ class GlaucomaModelTrainer:
         self.val_csvs = val_csvs
         self.image_paths = image_paths
         self.checkpoint_path = checkpoint_path
+        self.class_weights = None
         
         # Default parameters
         self.default_params = {
@@ -130,28 +131,28 @@ class GlaucomaModelTrainer:
             return transforms.Compose([
                 transforms.Resize((self.params['image_size'], self.params['image_size'])),
                 transforms.RandomApply([
-                    transforms.ColorJitter(brightness=0.3, contrast=0.3, 
-                                        saturation=0.3, hue=0.1)
-                ], p=0.7),
-                transforms.RandomAffine(degrees=15, translate=(0.15, 0.15), 
-                                      scale=(0.85, 1.15)),
+                    transforms.ColorJitter(brightness=0.4, contrast=0.4, 
+                                        saturation=0.4, hue=0.2)
+                ], p=0.8), 
+                transforms.RandomAffine(degrees=20, translate=(0.2, 0.2), 
+                                      scale=(0.8, 1.2), shear=15), 
                 transforms.RandomHorizontalFlip(p=0.5),
                 transforms.RandomVerticalFlip(p=0.5),
-                transforms.RandomApply([transforms.GaussianBlur(3)], p=0.4),
+                transforms.RandomApply([transforms.GaussianBlur(3)], p=0.5),
                 transforms.ToTensor(),
                 transforms.Normalize([0.21161936893269484, 0.0762942479204578, 0.02436706896535593], 
-                                     [0.1694396363130937, 0.07732758785821338, 0.02954764478795169]),
-                transforms.RandomErasing(p=0.3),
+                                  [0.1694396363130937, 0.07732758785821338, 0.02954764478795169]),
+                transforms.RandomErasing(p=0.4),  
                 transforms.RandomApply([
                     transforms.RandomAdjustSharpness(sharpness_factor=2)
-                ], p=0.3),
+                ], p=0.4),
             ])
         else:
             return transforms.Compose([
                 transforms.Resize((self.params['image_size'], self.params['image_size'])),
                 transforms.ToTensor(),
                 transforms.Normalize([0.21161936893269484, 0.0762942479204578, 0.02436706896535593], 
-                                     [0.1694396363130937, 0.07732758785821338, 0.02954764478795169])
+                                  [0.1694396363130937, 0.07732758785821338, 0.02954764478795169])
             ])
 
     def setup_data(self):
@@ -172,8 +173,11 @@ class GlaucomaModelTrainer:
         # Setup weighted sampling for training
         train_labels = [train_dataset[i][1] for i in range(len(train_dataset))]
         class_counts = torch.bincount(torch.tensor(train_labels))
-        weights = 1. / class_counts.float()
-        sample_weights = weights[train_labels]
+        self.class_weights = 1. / class_counts.float()
+
+        self.class_weights = self.class_weights / self.class_weights.sum() * len(self.class_weights)
+
+        sample_weights =self.class_weights[train_labels]
         sampler = torch.utils.data.WeightedRandomSampler(
             weights=sample_weights,
             num_samples=len(sample_weights),
@@ -212,22 +216,25 @@ class GlaucomaModelTrainer:
         self.setup_data()
         self.setup_model()
 
-        # Setup optimizer with differential learning rates
-        base_model_params = list(self.model.base_model.parameters())
-        classifier_params = list(self.model.classifier.parameters())
+        criterion = nn.CrossEntropyLoss(weight=self.class_weights.to(self.device))
         
-        optimizer = optim.AdamW([
-            {'params': base_model_params, 'lr': self.params['lr'] * 0.1},
-            {'params': classifier_params, 'lr': self.params['lr']}
-        ], weight_decay=self.params['wd'])
-
-        scheduler = lr_scheduler.CosineAnnealingWarmRestarts(
-            optimizer, T_0=10, T_mult=2, eta_min=1e-6
+        params = [
+            {'params': self.model.base_model.parameters(), 'lr': self.params['lr'] * 0.1},
+            {'params': self.model.classifier.parameters(), 'lr': self.params['lr']}
+        ]
+        
+        optimizer = optim.AdamW(params, weight_decay=self.params['wd'])
+        
+        scheduler = lr_scheduler.OneCycleLR(
+            optimizer,
+            max_lr=[self.params['lr'] * 0.1, self.params['lr']],
+            epochs=self.params['num_epochs'],
+            steps_per_epoch=len(self.train_loader),
+            pct_start=0.3,
+            anneal_strategy='cos'
         )
 
-        criterion = nn.CrossEntropyLoss()
         scaler = torch.amp.GradScaler()
-        
         best_val_loss = float('inf')
         patience_counter = 0
 
@@ -236,7 +243,7 @@ class GlaucomaModelTrainer:
             self.model.train()
             train_loss = 0
             
-            for images, labels in tqdm(self.train_loader, desc=f'Epoch {epoch+1}'):
+            for images, labels in tqdm(self.train_loader, desc='Training Loop'):
                 images, labels = images.to(self.device), labels.to(self.device)
                 
                 optimizer.zero_grad()
@@ -290,10 +297,10 @@ class GlaucomaModelTrainer:
         val_loss = 0
         correct = 0
         total = 0
-        criterion = nn.CrossEntropyLoss()
+        criterion = nn.CrossEntropyLoss(weight=self.class_weights.to(self.device))
         
         with torch.no_grad():
-            for images, labels in self.val_loader:
+            for images, labels in tqdm(self.val_loader, desc='Validation Loop'):
                 images, labels = images.to(self.device), labels.to(self.device)
                 outputs = self.model(images)
                 loss = criterion(outputs, labels)
@@ -335,45 +342,45 @@ def main():
     # Train model
     print('First training model')
     trainer = GlaucomaModelTrainer(
-        train_csvs=['../data/dataset1/csvs/train.csv',
-                    '../data/dataset2/csvs/train.csv'],
-        val_csvs=['../data/dataset1/csvs/val.csv',
-                  '../data/dataset2/csvs/val.csv'],
-        image_paths=['../data/dataset1/processed',
-                    '../data/dataset2/processed'],
-        batch_size=32,
-        num_epochs=100,
+        train_csvs=['../data/dataset1/csvs/train.csv', '../data/dataset2/csvs/train.csv'],
+        val_csvs=['../data/dataset1/csvs/val.csv', '../data/dataset2/csvs/val.csv'],
+        image_paths=['../data/dataset1/processed', '../data/dataset2/processed'],
+        # train_csvs=['../data/dataset2/csvs/train.csv'],
+        # val_csvs=['../data/dataset2/csvs/val.csv'],
+        # image_paths=['../data/dataset2/processed'],
+        batch_size=16,
+        num_epochs=150,
         patience=15,
         base_model='efficientnet_b0',
-        lr=0.01,
-        wd=0.005,
-        image_size=256,
-        freeze_blocks=6
+        lr=0.0002,
+        wd=0.01,
+        image_size=320,
+        freeze_blocks=0
     )
     trainer.train()
     trainer.plot_training_history()
     
     # Fine tune model
-    print('Fine tuning model')
-    finetuner = GlaucomaModelTrainer(
-        train_csvs=['../data/dataset1/csvs/train.csv',
-                    '../data/dataset2/csvs/train.csv'],
-        val_csvs=['../data/dataset1/csvs/val.csv',
-                  '../data/dataset2/csvs/val.csv'],
-        image_paths=['../data/dataset1/processed',
-                    '../data/dataset2/processed'],
-        checkpoint_path='model_checkpoints/glaucoma_efficientnet_b0_best.pth', 
-        batch_size=16,  
-        num_epochs=50,  
-        patience=10,
-        base_model='efficientnet_b0', 
-        lr=0.0001,  
-        wd=0.01,
-        image_size=256,
-        freeze_blocks=6
-    )
-    finetuner.train()
-    finetuner.plot_training_history()
+    # print('Fine tuning model')
+    # finetuner = GlaucomaModelTrainer(
+    #     train_csvs=['../data/dataset1/csvs/train.csv',
+    #                 '../data/dataset2/csvs/train.csv'],
+    #     val_csvs=['../data/dataset1/csvs/val.csv',
+    #               '../data/dataset2/csvs/val.csv'],
+    #     image_paths=['../data/dataset1/processed',
+    #                 '../data/dataset2/processed'],
+    #     checkpoint_path='model_checkpoints/glaucoma_efficientnet_b0_best.pth', 
+    #     batch_size=16,  
+    #     num_epochs=50,  
+    #     patience=10,
+    #     base_model='efficientnet_b0', 
+    #     lr=0.0001,  
+    #     wd=0.01,
+    #     image_size=256,
+    #     freeze_blocks=6
+    # )
+    # finetuner.train()
+    # finetuner.plot_training_history()
 
 if __name__ == '__main__':
     main()

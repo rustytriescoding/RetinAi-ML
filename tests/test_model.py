@@ -114,7 +114,7 @@ class GlaucomaModelTester:
         
         for csv_path in self.test_csvs:
             test_name = os.path.basename(csv_path).split('.')[0]
-            print(f"\nTesting on {test_name}")
+            print('Starting testing')
             
             # Run predictions
             predictions, labels, probabilities = self.test_model(csv_path)
@@ -169,6 +169,7 @@ def main():
 
     tester = GlaucomaModelTester(
         model_path='../train/model_checkpoints/glaucoma_efficientnet_b0_best.pth',
+        # model_path='../models/efficientnet_b0/retinai_efficientnet_b0_0.1.1.pth',
         image_path='../data/dataset1/processed',
         test_csvs=test_csvs,
         base_model='efficientnet_b0',

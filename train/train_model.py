@@ -6,6 +6,7 @@ import torch.optim.lr_scheduler as lr_scheduler
 import torchvision.transforms as transforms
 import os
 import matplotlib.pyplot as plt
+import numpy as np
 from tqdm import tqdm
 import json
 from datetime import datetime
@@ -91,11 +92,12 @@ class ModelCheckpointer:
         return checkpoint['epoch']
 
 class GlaucomaModelTrainer:
-    def __init__(self, train_csvs, val_csvs, image_paths, checkpoint_path=None, 
+    def __init__(self, train_csvs, val_csvs, image_paths, segment_paths=None, checkpoint_path=None, 
                  finetune_params=None, **kwargs):
         self.train_csvs = train_csvs
         self.val_csvs = val_csvs
         self.image_paths = image_paths
+        self.segment_paths = segment_paths or [None] * len(image_paths)  
         self.checkpoint_path = checkpoint_path
         self.class_weights = None
         
@@ -108,8 +110,7 @@ class GlaucomaModelTrainer:
             'lr': 0.0001,
             'wd': 1e-5,
             'dropout_rate': 0.2,
-            'image_size': 256,
-            'freeze_blocks': 0
+            'image_size': 224,
         }
         
         # Update with provided parameters
@@ -129,24 +130,15 @@ class GlaucomaModelTrainer:
     def get_transforms(self, is_training=True):
         if is_training:
             return transforms.Compose([
-                transforms.Resize((self.params['image_size'], self.params['image_size'])),
-                transforms.RandomApply([
-                    transforms.ColorJitter(brightness=0.4, contrast=0.4, 
-                                        saturation=0.4, hue=0.2)
-                ], p=0.8), 
-                transforms.RandomAffine(degrees=20, translate=(0.2, 0.2), 
-                                      scale=(0.8, 1.2), shear=15), 
-                transforms.RandomHorizontalFlip(p=0.5),
-                transforms.RandomVerticalFlip(p=0.5),
-                transforms.RandomApply([transforms.GaussianBlur(3)], p=0.5),
-                transforms.ToTensor(),
-                transforms.Normalize([0.21161936893269484, 0.0762942479204578, 0.02436706896535593], 
-                                  [0.1694396363130937, 0.07732758785821338, 0.02954764478795169]),
-                transforms.RandomErasing(p=0.4),  
-                transforms.RandomApply([
-                    transforms.RandomAdjustSharpness(sharpness_factor=2)
-                ], p=0.4),
-            ])
+            transforms.Resize((self.params['image_size'], self.params['image_size'])),
+            transforms.RandomHorizontalFlip(),
+            transforms.RandomVerticalFlip(),
+            transforms.RandomRotation(10),
+            transforms.ColorJitter(brightness=0.1, contrast=0.1),
+            transforms.ToTensor(),
+            transforms.Normalize([0.21161936893269484, 0.0762942479204578, 0.02436706896535593], 
+                              [0.1694396363130937, 0.07732758785821338, 0.02954764478795169]),
+        ])
         else:
             return transforms.Compose([
                 transforms.Resize((self.params['image_size'], self.params['image_size'])),
@@ -161,23 +153,39 @@ class GlaucomaModelTrainer:
 
         train_datasets, val_datasets = [], []
 
-        for train_csv, image_path in zip(self.train_csvs, self.image_paths):
-            train_datasets.append(GlaucomaDataset(train_csv, image_path, train_transform))
+        for train_csv, image_path, segment_path in zip(self.train_csvs, self.image_paths, self.segment_paths):
+            train_datasets.append(GlaucomaDataset(
+                train_csv, 
+                image_path, 
+                transform=train_transform,
+                segment_dir=segment_path
+            ))
 
-        for val_csv, image_path in zip(self.val_csvs, self.image_paths):
-            val_datasets.append(GlaucomaDataset(val_csv, image_path, val_transform))
+        for val_csv, image_path, segment_path in zip(self.val_csvs, self.image_paths, self.segment_paths):
+            val_datasets.append(GlaucomaDataset(
+                val_csv, 
+                image_path, 
+                transform=val_transform,
+                segment_dir=segment_path
+            ))
 
         train_dataset = torch.utils.data.ConcatDataset(train_datasets)
         val_dataset = torch.utils.data.ConcatDataset(val_datasets)
 
-        # Setup weighted sampling for training
-        train_labels = [train_dataset[i][1] for i in range(len(train_dataset))]
+        # Get labels for calculating weights (now index [2] contains the label)
+        train_labels = [train_dataset[i][2].item() for i in range(len(train_dataset))]
         class_counts = torch.bincount(torch.tensor(train_labels))
-        self.class_weights = 1. / class_counts.float()
-
-        self.class_weights = self.class_weights / self.class_weights.sum() * len(self.class_weights)
-
-        sample_weights =self.class_weights[train_labels]
+        total_samples = sum(class_counts)
+        
+        # Store class weights for loss function
+        pos_weight = torch.tensor([class_counts[0] / class_counts[1]]).to(self.device)
+        self.class_weights = pos_weight
+        
+        print(f"Class counts - Normal: {class_counts[0]}, Glaucoma: {class_counts[1]}")
+        print(f"Using positive class weight: {pos_weight.item():.2f}")
+        
+        # Calculate sampling weights
+        sample_weights = torch.tensor([1/class_counts[label] for label in train_labels])
         sampler = torch.utils.data.WeightedRandomSampler(
             weights=sample_weights,
             num_samples=len(sample_weights),
@@ -202,10 +210,12 @@ class GlaucomaModelTrainer:
 
     def setup_model(self):
         self.model = GlaucomaDiagnoser(
-            num_classes=2,
+            num_classes=1,
             base_model=self.params['base_model'],
             dropout_rate=self.params['dropout_rate'],
-            freeze_blocks=self.params['freeze_blocks']
+            freeze_segment_blocks=self.params['freeze_segment_blocks'],
+            freeze_full_blocks=self.params['freeze_full_blocks'],
+            segment_bias=self.params['segment_bias']
         ).to(self.device)
 
         if self.checkpoint_path:
@@ -216,59 +226,73 @@ class GlaucomaModelTrainer:
         self.setup_data()
         self.setup_model()
 
-        criterion = nn.CrossEntropyLoss(weight=self.class_weights.to(self.device))
+        criterion = nn.BCEWithLogitsLoss(pos_weight=self.class_weights)
         
         params = [
-            {'params': self.model.base_model.parameters(), 'lr': self.params['lr'] * 0.1},
-            {'params': self.model.classifier.parameters(), 'lr': self.params['lr']}
+            {'params': self.model.full_model.parameters(), 'lr': self.params['lr']},
+            {'params': self.model.segment_model.parameters(), 'lr': self.params['lr']},
+            {'params': self.model.classifier.parameters(), 'lr': self.params['lr'] * 2},
+            {'params': self.model.attention.parameters(), 'lr': self.params['lr'] * 2}
         ]
         
         optimizer = optim.AdamW(params, weight_decay=self.params['wd'])
         
-        scheduler = lr_scheduler.OneCycleLR(
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer,
-            max_lr=[self.params['lr'] * 0.1, self.params['lr']],
-            epochs=self.params['num_epochs'],
-            steps_per_epoch=len(self.train_loader),
-            pct_start=0.3,
-            anneal_strategy='cos'
+            mode='min',
+            factor=0.7,    # Less aggressive reduction (was 0.5)
+            patience=3,    # Reduced patience to adapt faster
+            verbose=True,
+            min_lr=1e-6
         )
 
         scaler = torch.amp.GradScaler()
         best_val_loss = float('inf')
         patience_counter = 0
-
+        
         for epoch in range(self.params['num_epochs']):
             # Training phase
             self.model.train()
             train_loss = 0
+            correct = 0
+            total = 0
             
-            for images, labels in tqdm(self.train_loader, desc='Training Loop'):
-                images, labels = images.to(self.device), labels.to(self.device)
+            for batch_idx, (full_images, segment_images, labels) in enumerate(tqdm(self.train_loader, desc='Training Loop')):
+                full_images = full_images.to(self.device)
+                segment_images = segment_images.to(self.device)
+                labels = labels.to(self.device).float()
                 
                 optimizer.zero_grad()
                 
                 with torch.amp.autocast(device_type='cuda'):
-                    outputs = self.model(images)
+                    outputs, _ = self.model(full_images, segment_images)
+                    outputs = outputs.squeeze(1)
                     loss = criterion(outputs, labels)
-                
+
                 scaler.scale(loss).backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                
+                # Update optimizer first
                 scaler.step(optimizer)
                 scaler.update()
                 
                 train_loss += loss.item()
-
+                
+                # Calculate accuracy
+                predicted = (outputs > 0).float()
+                total += labels.size(0)
+                correct += (predicted == labels).sum().item()
+            
             train_loss = train_loss / len(self.train_loader)
+            train_acc = 100. * correct / total
             
             # Validation phase
             val_loss, metrics = self.validate()
+            scheduler.step(val_loss)
             
             print(f'Epoch {epoch+1}:')
-            print(f'Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}')
-            print(f'Metrics: {metrics}')
-            
-            scheduler.step()
+            print(f'Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.2f}%')
+            print(f'Val Loss: {val_loss:.4f}, Val Acc: {metrics["accuracy"]:.2f}%')
             
             # Save checkpoint
             self.checkpointer.save_checkpoint(
@@ -289,7 +313,7 @@ class GlaucomaModelTrainer:
             else:
                 patience_counter += 1
                 if patience_counter >= self.params['patience']:
-                    print(f'Early stopping triggered at epoch {epoch+1} Best validation loss {best_val_loss}')
+                    print(f'Early stopping triggered at epoch {epoch+1}')
                     break
 
     def validate(self):
@@ -297,18 +321,22 @@ class GlaucomaModelTrainer:
         val_loss = 0
         correct = 0
         total = 0
-        criterion = nn.CrossEntropyLoss(weight=self.class_weights.to(self.device))
+        criterion = nn.BCEWithLogitsLoss(pos_weight=self.class_weights)
         
         with torch.no_grad():
-            for images, labels in tqdm(self.val_loader, desc='Validation Loop'):
-                images, labels = images.to(self.device), labels.to(self.device)
-                outputs = self.model(images)
+            for full_images, segment_images, labels in tqdm(self.val_loader, desc='Validation Loop'):
+                full_images = full_images.to(self.device)
+                segment_images = segment_images.to(self.device)
+                labels = labels.to(self.device).float()
+                
+                outputs = self.model(full_images, segment_images)
+                outputs = outputs.squeeze(1)
                 loss = criterion(outputs, labels)
                 val_loss += loss.item()
                 
-                _, predicted = outputs.max(1)
+                predicted = (outputs > 0).float()
                 total += labels.size(0)
-                correct += predicted.eq(labels).sum().item()
+                correct += (predicted == labels).sum().item()
 
         accuracy = 100. * correct / total
         val_loss = val_loss / len(self.val_loader)
@@ -320,9 +348,14 @@ class GlaucomaModelTrainer:
         
         return val_loss, metrics
 
-    def plot_training_history(self):
-        with open(self.checkpointer.log_file, 'r') as f:
-            history = json.load(f)
+    def plot_training_history(self, log_file=None):
+
+        if log_file:
+            with open(log_file, 'r') as f:
+                history = json.load(f)
+        else:
+            with open(self.checkpointer.log_file, 'r') as f:
+                history = json.load(f)
         
         epochs = [entry['epoch'] for entry in history]
         train_losses = [entry['train_loss'] for entry in history]
@@ -345,42 +378,22 @@ def main():
         train_csvs=['../data/dataset1/csvs/train.csv', '../data/dataset2/csvs/train.csv'],
         val_csvs=['../data/dataset1/csvs/val.csv', '../data/dataset2/csvs/val.csv'],
         image_paths=['../data/dataset1/processed', '../data/dataset2/processed'],
-        # train_csvs=['../data/dataset2/csvs/train.csv'],
-        # val_csvs=['../data/dataset2/csvs/val.csv'],
-        # image_paths=['../data/dataset2/processed'],
-        batch_size=16,
-        num_epochs=150,
+        segment_paths=['../data/dataset1/segment', '../data/dataset2/segment'], 
+        batch_size=64,
+        num_epochs=100,
         patience=15,
         base_model='efficientnet_b0',
-        lr=0.0002,
-        wd=0.01,
-        image_size=320,
-        freeze_blocks=0
+        lr=0.001,
+        wd=0.003,
+        image_size=224,
+        freeze_full_blocks=5,
+        freeze_segment_blocks=4,
+        dropout_rate=0.3,
+        segment_bias=0.7 
     )
     trainer.train()
     trainer.plot_training_history()
-    
-    # Fine tune model
-    # print('Fine tuning model')
-    # finetuner = GlaucomaModelTrainer(
-    #     train_csvs=['../data/dataset1/csvs/train.csv',
-    #                 '../data/dataset2/csvs/train.csv'],
-    #     val_csvs=['../data/dataset1/csvs/val.csv',
-    #               '../data/dataset2/csvs/val.csv'],
-    #     image_paths=['../data/dataset1/processed',
-    #                 '../data/dataset2/processed'],
-    #     checkpoint_path='model_checkpoints/glaucoma_efficientnet_b0_best.pth', 
-    #     batch_size=16,  
-    #     num_epochs=50,  
-    #     patience=10,
-    #     base_model='efficientnet_b0', 
-    #     lr=0.0001,  
-    #     wd=0.01,
-    #     image_size=256,
-    #     freeze_blocks=6
-    # )
-    # finetuner.train()
-    # finetuner.plot_training_history()
+    # trainer.plot_training_history('model_checkpoints/glaucoma_efficientnet_b0_training_log.json')
 
 if __name__ == '__main__':
     main()

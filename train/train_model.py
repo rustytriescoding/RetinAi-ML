@@ -6,7 +6,6 @@ import torch.optim.lr_scheduler as lr_scheduler
 import torchvision.transforms as transforms
 import os
 import matplotlib.pyplot as plt
-import numpy as np
 from tqdm import tqdm
 import json
 from datetime import datetime
@@ -172,10 +171,8 @@ class GlaucomaModelTrainer:
         train_dataset = torch.utils.data.ConcatDataset(train_datasets)
         val_dataset = torch.utils.data.ConcatDataset(val_datasets)
 
-        # Get labels for calculating weights (now index [2] contains the label)
         train_labels = [train_dataset[i][2].item() for i in range(len(train_dataset))]
         class_counts = torch.bincount(torch.tensor(train_labels))
-        total_samples = sum(class_counts)
         
         # Store class weights for loss function
         pos_weight = torch.tensor([class_counts[0] / class_counts[1]]).to(self.device)
@@ -240,8 +237,8 @@ class GlaucomaModelTrainer:
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer,
             mode='min',
-            factor=0.7,    # Less aggressive reduction (was 0.5)
-            patience=3,    # Reduced patience to adapt faster
+            factor=0.7, 
+            patience=3,   
             verbose=True,
             min_lr=1e-6
         )

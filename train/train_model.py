@@ -14,6 +14,7 @@ from sys import path
 path.append('../src')
 from glaucoma_dataset import GlaucomaDataset
 from glaucoma_model import GlaucomaDiagnoser
+from resnet_glaucoma_model import ResNetGlaucomaDiagnoser
 
 class ModelCheckpointer:
     def __init__(self, save_dir, model_name):
@@ -64,7 +65,7 @@ class ModelCheckpointer:
             'learning_rate': optimizer.param_groups[0]['lr'],
             'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             'metrics': metrics,
-            'params': params
+            'params': params,
         }
         self.training_history.append(log_entry)
         
@@ -135,15 +136,13 @@ class GlaucomaModelTrainer:
             transforms.RandomRotation(10),
             transforms.ColorJitter(brightness=0.1, contrast=0.1),
             transforms.ToTensor(),
-            transforms.Normalize([0.21161936893269484, 0.0762942479204578, 0.02436706896535593], 
-                              [0.1694396363130937, 0.07732758785821338, 0.02954764478795169]),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         ])
         else:
             return transforms.Compose([
                 transforms.Resize((self.params['image_size'], self.params['image_size'])),
                 transforms.ToTensor(),
-                transforms.Normalize([0.21161936893269484, 0.0762942479204578, 0.02436706896535593], 
-                                  [0.1694396363130937, 0.07732758785821338, 0.02954764478795169])
+                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
 
     def setup_data(self):
@@ -171,28 +170,20 @@ class GlaucomaModelTrainer:
         train_dataset = torch.utils.data.ConcatDataset(train_datasets)
         val_dataset = torch.utils.data.ConcatDataset(val_datasets)
 
-        train_labels = [train_dataset[i][2].item() for i in range(len(train_dataset))]
-        class_counts = torch.bincount(torch.tensor(train_labels))
+        # train_labels = [train_dataset[i][2].item() for i in range(len(train_dataset))]
+        # class_counts = torch.bincount(torch.tensor(train_labels))
         
-        # Store class weights for loss function
-        pos_weight = torch.tensor([class_counts[0] / class_counts[1]]).to(self.device)
-        self.class_weights = pos_weight
+        # self.class_weights = torch.tensor([class_counts[0] / class_counts[1]]).to(self.device)
+        self.class_weights = torch.tensor([7.26]).to(self.device)
+
+        # print(f"Class counts - Normal: {class_counts[0]}, Glaucoma: {class_counts[1]}")
+        print(f"Using positive class weight: {self.class_weights.item():.2f}")
         
-        print(f"Class counts - Normal: {class_counts[0]}, Glaucoma: {class_counts[1]}")
-        print(f"Using positive class weight: {pos_weight.item():.2f}")
-        
-        # Calculate sampling weights
-        sample_weights = torch.tensor([1/class_counts[label] for label in train_labels])
-        sampler = torch.utils.data.WeightedRandomSampler(
-            weights=sample_weights,
-            num_samples=len(sample_weights),
-            replacement=True
-        )
 
         self.train_loader = DataLoader(
             train_dataset, 
             batch_size=self.params['batch_size'],
-            sampler=sampler,
+            shuffle=True,
             num_workers=4,
             pin_memory=True
         )
@@ -207,12 +198,10 @@ class GlaucomaModelTrainer:
 
     def setup_model(self):
         self.model = GlaucomaDiagnoser(
-            num_classes=1,
             base_model=self.params['base_model'],
             dropout_rate=self.params['dropout_rate'],
             freeze_segment_blocks=self.params['freeze_segment_blocks'],
             freeze_full_blocks=self.params['freeze_full_blocks'],
-            segment_bias=self.params['segment_bias']
         ).to(self.device)
 
         if self.checkpoint_path:
@@ -228,8 +217,7 @@ class GlaucomaModelTrainer:
         params = [
             {'params': self.model.full_model.parameters(), 'lr': self.params['lr']},
             {'params': self.model.segment_model.parameters(), 'lr': self.params['lr']},
-            {'params': self.model.classifier.parameters(), 'lr': self.params['lr'] * 2},
-            {'params': self.model.attention.parameters(), 'lr': self.params['lr'] * 2}
+            {'params': self.model.classifier.parameters(), 'lr': self.params['lr']},
         ]
         
         optimizer = optim.AdamW(params, weight_decay=self.params['wd'])
@@ -237,9 +225,8 @@ class GlaucomaModelTrainer:
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer,
             mode='min',
-            factor=0.7, 
-            patience=3,   
-            verbose=True,
+            factor=0.5, 
+            patience=4,   
             min_lr=1e-6
         )
 
@@ -254,7 +241,7 @@ class GlaucomaModelTrainer:
             correct = 0
             total = 0
             
-            for batch_idx, (full_images, segment_images, labels) in enumerate(tqdm(self.train_loader, desc='Training Loop')):
+            for full_images, segment_images, labels in tqdm(self.train_loader, desc='Training Loop'):
                 full_images = full_images.to(self.device)
                 segment_images = segment_images.to(self.device)
                 labels = labels.to(self.device).float()
@@ -262,7 +249,7 @@ class GlaucomaModelTrainer:
                 optimizer.zero_grad()
                 
                 with torch.amp.autocast(device_type='cuda'):
-                    outputs, _ = self.model(full_images, segment_images)
+                    outputs = self.model(full_images, segment_images)
                     outputs = outputs.squeeze(1)
                     loss = criterion(outputs, labels)
 
@@ -276,7 +263,7 @@ class GlaucomaModelTrainer:
                 train_loss += loss.item()
                 
                 # Calculate accuracy
-                predicted = (outputs > 0).float()
+                predicted = (torch.sigmoid(outputs) > 0.5).float()
                 total += labels.size(0)
                 correct += (predicted == labels).sum().item()
             
@@ -288,8 +275,7 @@ class GlaucomaModelTrainer:
             scheduler.step(val_loss)
             
             print(f'Epoch {epoch+1}:')
-            print(f'Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.2f}%')
-            print(f'Val Loss: {val_loss:.4f}, Val Acc: {metrics["accuracy"]:.2f}%')
+            print(f'Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.2f}% Val Loss: {val_loss:.4f}, Val Acc: {metrics["accuracy"]:.2f}%')
             
             # Save checkpoint
             self.checkpointer.save_checkpoint(
@@ -310,8 +296,9 @@ class GlaucomaModelTrainer:
             else:
                 patience_counter += 1
                 if patience_counter >= self.params['patience']:
-                    print(f'Early stopping triggered at epoch {epoch+1}')
+                    print(f'Early stopping triggered at epoch {epoch+1} Best loss {best_val_loss}')
                     break
+    
 
     def validate(self):
         self.model.eval()
@@ -331,7 +318,7 @@ class GlaucomaModelTrainer:
                 loss = criterion(outputs, labels)
                 val_loss += loss.item()
                 
-                predicted = (outputs > 0).float()
+                predicted = (torch.sigmoid(outputs) > 0.5).float()
                 total += labels.size(0)
                 correct += (predicted == labels).sum().item()
 
@@ -346,7 +333,11 @@ class GlaucomaModelTrainer:
         return val_loss, metrics
 
     def plot_training_history(self, log_file=None):
-
+        # Create results directory
+        results_dir = 'train_results'
+        os.makedirs(results_dir, exist_ok=True)
+        
+        # Load history
         if log_file:
             with open(log_file, 'r') as f:
                 history = json.load(f)
@@ -354,18 +345,76 @@ class GlaucomaModelTrainer:
             with open(self.checkpointer.log_file, 'r') as f:
                 history = json.load(f)
         
+        # Create figure with two subplots - one for loss, one for parameters
+        fig = plt.figure(figsize=(15, 10))
+        
+        # Loss plot
+        ax1 = plt.subplot(2, 1, 1)
         epochs = [entry['epoch'] for entry in history]
         train_losses = [entry['train_loss'] for entry in history]
         val_losses = [entry['val_loss'] for entry in history]
         
-        plt.figure(figsize=(10, 5))
-        plt.plot(epochs, train_losses, label='Training Loss')
-        plt.plot(epochs, val_losses, label='Validation Loss')
-        plt.title('Training History')
-        plt.xlabel('Epoch')
-        plt.ylabel('Loss')
-        plt.legend()
-        plt.grid(True)
+        ax1.plot(epochs, train_losses, label='Training Loss')
+        ax1.plot(epochs, val_losses, label='Validation Loss')
+        ax1.set_title('Training History')
+        ax1.set_xlabel('Epoch')
+        ax1.set_ylabel('Loss')
+        ax1.legend()
+        ax1.grid(True)
+        
+        # Parameters text
+        ax2 = plt.subplot(2, 1, 2)
+        ax2.axis('off')
+        
+        # Get final metrics and parameters from history
+        final_metrics = history[-1].get('metrics', {})
+        params = history[-1].get('params', {})
+        
+        # Create parameter text
+        param_text = "Training Parameters:\n"
+        param_text += f"Model: {params.get('base_model', 'N/A')}\n"
+        param_text += f"Learning Rate: {params.get('lr', 'N/A')}\n"
+        param_text += f"Weight Decay: {params.get('wd', 'N/A')}\n"
+        param_text += f"Batch Size: {params.get('batch_size', 'N/A')}\n"
+        param_text += f"Dropout Rate: {params.get('dropout_rate', 'N/A')}\n"
+        param_text += f"Image Size: {params.get('image_size', 'N/A')}\n"
+        param_text += f"Frozen Full Blocks: {params.get('freeze_full_blocks', 'N/A')}\n"
+        param_text += f"Frozen Segment Blocks: {params.get('freeze_segment_blocks', 'N/A')}\n\n"
+        
+        param_text += "Final Results:\n"
+        param_text += f"Best Validation Loss: {min([entry['val_loss'] for entry in history]):.4f}\n"
+        param_text += f"Final Validation Loss: {history[-1]['val_loss']:.4f}\n"
+        param_text += f"Final Validation Accuracy: {final_metrics.get('accuracy', 'N/A')}\n"
+        param_text += f"Total Epochs: {len(epochs)}\n"
+        
+        
+        ax2.text(0.1, 0.9, param_text, fontsize=10, verticalalignment='top', 
+                family='monospace')
+        
+        # Adjust layout and save
+        plt.tight_layout()
+        
+        # Create unique filename with timestamp
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        model_name = params.get('base_model', 'unknown_model')
+        filename = f"{results_dir}/{model_name}_{timestamp}.png"
+        
+        # Save figure
+        plt.savefig(filename, dpi=300, bbox_inches='tight')
+        print(f"Training results saved to {filename}")
+        
+        # Also save parameters and metrics to JSON for easy reference
+        results_dict = {
+            'parameters': params,
+            'training_history': history,
+            'final_metrics': final_metrics,
+        }
+        
+        json_filename = f"{results_dir}/{model_name}_{timestamp}.json"
+        with open(json_filename, 'w') as f:
+            json.dump(results_dict, f, indent=4)
+        
+        # Show plot if in interactive environment
         plt.show()
 
 def main():
@@ -376,17 +425,16 @@ def main():
         val_csvs=['../data/dataset1/csvs/val.csv', '../data/dataset2/csvs/val.csv'],
         image_paths=['../data/dataset1/processed', '../data/dataset2/processed'],
         segment_paths=['../data/dataset1/segment', '../data/dataset2/segment'], 
-        batch_size=64,
+        batch_size=32,
         num_epochs=100,
-        patience=15,
+        patience=5,
         base_model='efficientnet_b0',
-        lr=0.001,
-        wd=0.003,
+        lr=0.00001,
+        wd=0.01,
         image_size=224,
         freeze_full_blocks=5,
         freeze_segment_blocks=4,
-        dropout_rate=0.3,
-        segment_bias=0.7 
+        dropout_rate=0.2,
     )
     trainer.train()
     trainer.plot_training_history()

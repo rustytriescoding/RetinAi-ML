@@ -36,7 +36,7 @@ class GlaucomaModelTester:
         self.setup_transforms()
 
     def setup_model(self):
-        self.model = GlaucomaDiagnoser(num_classes=1, base_model=self.base_model)
+        self.model = GlaucomaDiagnoser(base_model=self.base_model)
         checkpoint = torch.load(self.model_path, map_location=self.device, weights_only=False)
         self.model.load_state_dict(checkpoint['model_state_dict'])
         self.model.to(self.device)

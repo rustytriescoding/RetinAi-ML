@@ -46,7 +46,8 @@ def apply_clahe(img, clip_limit=2.0, tile_grid_size=(8, 8)):
     return Image.fromarray(img_clahe)
 
 def extract_green_channel(x):
-    return x[1].unsqueeze(0).repeat(3, 1, 1)
+    # return x[1].unsqueeze(0).repeat(3, 1, 1)
+    return x[1].unsqueeze(0)
 
 class GlaucomaModelTrainer:
     def __init__(self, train_csvs, val_csvs, image_paths, checkpoint_path=None, 
@@ -88,9 +89,9 @@ class GlaucomaModelTrainer:
     def get_transforms(self, is_training=True):
         base_transforms = [
             transforms.Resize((self.params['image_size'], self.params['image_size'])),
-            transforms.Grayscale(num_output_channels=3), #TRY GREY SCALE
-            transforms.Lambda(apply_clahe),
-            # transforms.Lambda(apply_clahe_to_green)
+            # transforms.ToTensor(),
+            # transforms.Lambda(lambda x: x[1].unsqueeze(0)),  # Extract green channel and keep single channel
+            # transforms.Normalize(mean=[0.456], std=[0.224])  # Single channel normalization
         ]
 
         if is_training:
@@ -114,7 +115,8 @@ class GlaucomaModelTrainer:
             transforms.Lambda(extract_green_channel), # Extract only green channel
             # transforms.Normalize(mean=[0.395, 0.395, 0.395], std=[0.181, 0.181, 0.181]) #green channel mean and std
             # transforms.Normalize(mean=[0.653, 0.395, 0.217], std=[0.231, 0.182, 0.147]) # Color all 3 channels mean and std
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]) #image net mean and std
+            # transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]) #image net mean and std
+            transforms.Normalize(mean=[0.456], std=[0.224]) #image net mean and std
             # transforms.Normalize(mean=[0.456, 0.456, 0.456], std=[0.224, 0.224, 0.224]) #image net mean and std gren
         ])
 
@@ -146,11 +148,11 @@ class GlaucomaModelTrainer:
         print('Train Dataset Length', len(train_dataset))
         print('Validation Dataset Length', len(val_dataset))
 
-        # train_labels = [train_dataset[i][2].item() for i in range(len(train_dataset))]
+        # train_labels = [int(train_dataset[i][1].item()) for i in range(len(train_dataset))]
         # class_counts = torch.bincount(torch.tensor(train_labels))
-        
+        # print('Weight:', class_counts[0] / class_counts[1])
         # self.class_weights = torch.tensor([class_counts[0] / class_counts[1]]).to(self.device)
-        self.class_weights = torch.tensor([1.58359555276]).to(self.device) # Hardcode weights to reduce compute time [7.26]
+        self.class_weights = torch.tensor([1.6209]).to(self.device) # Hardcode weights to reduce compute time [7.26]
 
         # print(f"Class counts - Normal: {class_counts[0]}, Glaucoma: {class_counts[1]}")
         print(f"Using positive class weight: {self.class_weights.item():.2f}") 
@@ -426,76 +428,72 @@ class GlaucomaModelTrainer:
 def main():
    
     # Best Val F1 0.8411 Val Loss 0.3699 Using resnet18, training at 0.0001 to failure, then trying again with 0.001
-    print('--- Phase 1 ---')
-    trainer = GlaucomaModelTrainer(
-        train_csvs=['../data/dataset3/csvs/train.csv'],
-        val_csvs=['../data/dataset3/csvs/val.csv'],
-        image_paths=['../data/dataset3/disc-crop'], 
-        num_epochs=10,
-        patience=2,
-        base_model='efficientnet_b0',
-        wd=0.03, 
-        image_size=224,
-        freeze_blocks=6,
-        dropout_rate=0.2,
-        lr=0.0001, 
-    )
-    trainer.train()
+    # print('--- Phase 1 ---')
+    # trainer = GlaucomaModelTrainer(
+    #     train_csvs=['../data/dataset3/csvs/train.csv'],
+    #     val_csvs=['../data/dataset3/csvs/val.csv'],
+    #     image_paths=['../data/dataset3/disc-crop'], 
+    #     num_epochs=10,
+    #     patience=2,
+    #     base_model='efficientnet_b0',
+    #     wd=0.03, 
+    #     image_size=224,
+    #     freeze_blocks=6,
+    #     dropout_rate=0.2,
+    #     lr=0.0001, 
+    # )
+    # trainer.train()
 
-    print('--- Phase 2 ---')
-    trainer = GlaucomaModelTrainer(
-        train_csvs=['../data/dataset3/csvs/train.csv'],
-        val_csvs=['../data/dataset3/csvs/val.csv'],
-        image_paths=['../data/dataset3/disc-crop'], 
-        num_epochs=100,
-        patience=2,
-        base_model='efficientnet_b0',
-        wd=0.03, 
-        image_size=224,
-        freeze_blocks=3,
-        dropout_rate=0.5,
-        lr=0.0001,
-        checkpoint_path='model_checkpoints/glaucoma_efficientnet_b0_latest.pth' 
-    )
-    trainer.train()
+    # print('--- Phase 2 ---')
+    # trainer = GlaucomaModelTrainer(
+    #     train_csvs=['../data/dataset3/csvs/train.csv'],
+    #     val_csvs=['../data/dataset3/csvs/val.csv'],
+    #     image_paths=['../data/dataset3/disc-crop'], 
+    #     num_epochs=100,
+    #     patience=2,
+    #     base_model='efficientnet_b0',
+    #     wd=0.03, 
+    #     image_size=224,
+    #     freeze_blocks=3,
+    #     dropout_rate=0.5,
+    #     lr=0.0001,
+    #     checkpoint_path='model_checkpoints/glaucoma_efficientnet_b0_latest.pth' 
+    # )
+    # trainer.train()
 
-    print('--- Phase 3 ---')
-    trainer = GlaucomaModelTrainer(
-        train_csvs=['../data/dataset3/csvs/train.csv'],
-        val_csvs=['../data/dataset3/csvs/val.csv'],
-        image_paths=['../data/dataset3/disc-crop'], 
-        num_epochs=100,
-        patience=5,
-        base_model='efficientnet_b0',
-        wd=0.05, 
-        image_size=224,
-        freeze_blocks=0,
-        dropout_rate=0.6,
-        lr=0.0002, 
-        checkpoint_path='model_checkpoints/glaucoma_efficientnet_b0_latest.pth' 
-    )
-    trainer.train()
-    trainer.plot_training_history()
-
+    # print('--- Phase 3 ---')
     # trainer = GlaucomaModelTrainer(
     #     train_csvs=['../data/dataset3/csvs/train.csv'],
     #     val_csvs=['../data/dataset3/csvs/val.csv'],
     #     image_paths=['../data/dataset3/disc-crop'], 
     #     num_epochs=100,
     #     patience=5,
-    #     base_model='mobilenetv3_small_100',
-    #     wd=0.03, 
+    #     base_model='efficientnet_b0',
+    #     wd=0.05, 
     #     image_size=224,
-    #     freeze_blocks=10,
-    #     dropout_rate=0.2,
-    #     lr=0.0001,
-    #     # checkpoint_path='model_checkpoints/glaucoma_mobilenetv3_small_100_best.pth' 
-    #     # checkpoint_path='../models/resnet50/glaucoma_resnet18_best.pth'
+    #     freeze_blocks=0,
+    #     dropout_rate=0.6,
+    #     lr=0.0002, 
+    #     checkpoint_path='model_checkpoints/glaucoma_efficientnet_b0_latest.pth' 
     # )
     # trainer.train()
     # trainer.plot_training_history()
-    # resnet50_trainer.plot_training_history('model_checkpoints/glaucoma_resnet50_training_log.json')
 
+    trainer = GlaucomaModelTrainer(
+        train_csvs=['../data/dataset3/csvs/train.csv', '../data/dataset4/csvs/train.csv'],
+        val_csvs=['../data/dataset3/csvs/val.csv', '../data/dataset4/csvs/val.csv'],
+        image_paths=['../data/dataset3/disc-crop', '../data/dataset4/disc-crop'], 
+        num_epochs=100,
+        patience=5,
+        base_model='efficientnet_b0',
+        wd=0.2, 
+        image_size=224,
+        freeze_blocks=1,
+        dropout_rate=0.6,
+        lr=0.0001, 
+    )
+    trainer.train()
+    trainer.plot_training_history()
 
 if __name__ == '__main__':
     main()

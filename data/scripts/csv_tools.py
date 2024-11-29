@@ -163,10 +163,12 @@ def main():
 
     # dataset3Tools = CsvTools(dataset_csv='../dataset3/csvs/dataset3.csv', save_dir='../dataset3/csvs')
     # dataset3Tools.split_csv(train_split=0.8)
-    dataset3Tools = CsvTools(dataset_csv='../dataset3/csvs/dataset3.csv', save_dir='../dataset3/csvs')
+
+    dataset4Tools = CsvTools(dataset_csv='../dataset4/csvs/dataset4.csv', save_dir='../dataset4/csvs')
+    dataset4Tools.split_csv(train_split=0.8)
     
-    # Add YOLO dataset creation
-    dataset3Tools.create_yolo_csvs(train_split=0.8)
+    # # Add YOLO dataset creation
+    # dataset3Tools.create_yolo_csvs(train_split=0.8)
     
 
 if __name__ == '__main__':

@@ -5,6 +5,7 @@ venv/
 data/dataset1
 data/dataset2
 data/dataset3
+data/dataset4
 
 # Models
 models/

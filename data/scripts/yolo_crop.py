@@ -117,14 +117,14 @@ def main():
     # Configuration
     # input_dir = Path('../dataset3/raw')
     # output_dir = Path('../dataset3/disc-crop')
-    input_dir = Path('../dataset1/raw')
-    output_dir = Path('../dataset1/disc-crop')
+    input_dir = Path('../dataset4/raw')
+    output_dir = Path('../dataset4/disc-crop')
     weights_path = '../../models/yolo/retinai_yolo.pt'
     
     # Initialize cropper
     cropper = DiscCropper(
         weights_path=weights_path,
-        conf_threshold=0.90, #higher to reduce poor images. 66 bad 0.5, 238 bad 0.85, 1357 bad 0.90
+        conf_threshold=0.85, #higher to reduce poor images. 66 bad 0.5, 238 bad 0.85, 1357 bad 0.90
         padding_percent=0.5 # Increase from 0.2
     )
     

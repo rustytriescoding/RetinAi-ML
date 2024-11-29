@@ -208,8 +208,8 @@ class FormatImage:
             circular_image.save(save_path)
 
 def main():
-    dataset1Format = FormatImage(image_dir='../dataset1/processed', segment_dir='../dataset1/segment', processed_dir='../dataset1/processed')
-    # dataset2Format.crop_and_save_images(gamma=0.3)
+    # Remove segment folder first
+    dataset1Format = FormatImage(image_dir='../dataset1/raw', segment_dir='../dataset1/raw_segment', processed_dir='../dataset1/processed')
     dataset1Format.crop_disc_and_save_images()
 
 if __name__ == '__main__':

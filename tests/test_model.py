@@ -16,12 +16,14 @@ path.append('../src')
 from glaucoma_dataset import GlaucomaDataset
 from glaucoma_model import GlaucomaDiagnoser
 
+# def extract_green_channel(x):
+#     return x[1].unsqueeze(0).repeat(3, 1, 1)
+
 class GlaucomaModelTester:
-    def __init__(self, model_path, image_path, segment_path, test_csvs, base_model='efficientnet_b0', 
+    def __init__(self, model_path, image_path, test_csvs, base_model='resnet50', 
                  image_size=224, batch_size=32):
         self.model_path = model_path
         self.image_path = image_path
-        self.segment_path = segment_path
         self.test_csvs = test_csvs
         self.base_model = base_model
         self.image_size = image_size
@@ -46,8 +48,9 @@ class GlaucomaModelTester:
         self.transform = transforms.Compose([
             transforms.Resize((self.image_size, self.image_size)),
             transforms.ToTensor(),
-            transforms.Normalize([0.21161936893269484, 0.0762942479204578, 0.02436706896535593],
-                              [0.1694396363130937, 0.07732758785821338, 0.02954764478795169])
+            # transforms.Lambda(extract_green_channel), 
+            # transforms.Normalize(mean=[0.395, 0.395, 0.395], std=[0.182, 0.182, 0.182]) 
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]) # Image net
         ])
 
     def test_model(self, csv_path):
@@ -55,7 +58,6 @@ class GlaucomaModelTester:
             csv_path, 
             self.image_path, 
             self.transform,
-            segment_dir=self.segment_path
         )
         
         loader = DataLoader(
@@ -71,12 +73,11 @@ class GlaucomaModelTester:
         all_probabilities = []
 
         with torch.no_grad():
-            for full_images, segment_images, labels in tqdm(loader, desc=f"Testing {os.path.basename(csv_path)}"):
+            for full_images, labels in tqdm(loader, desc=f"Testing {os.path.basename(csv_path)}"):
                 full_images = full_images.to(self.device)
-                segment_images = segment_images.to(self.device)
                 labels = labels.to(self.device)
                 
-                outputs = self.model(full_images, segment_images)
+                outputs = self.model(full_images)
                 outputs = outputs.squeeze(1)  # Remove the extra dimension
                 probabilities = torch.sigmoid(outputs)  # Use sigmoid for binary classification
                 predicted = (outputs > 0).float()  # Convert logits to binary predictions
@@ -174,14 +175,14 @@ class GlaucomaModelTester:
         return test_results
 
 def main():
-    test_csvs = ['../data/dataset1/csvs/test.csv',]
-
     tester = GlaucomaModelTester(
-        model_path='../train/model_checkpoints/glaucoma_efficientnet_b0_best.pth',
-        image_path='../data/dataset1/processed',
-        segment_path='../data/dataset1/segment',  
-        test_csvs=test_csvs,
-        base_model='efficientnet_b0',
+        # model_path='../train/model_checkpoints/glaucoma_efficientnet_b0_best.pth',
+        model_path='../train/model_checkpoints/glaucoma_resnet50_best.pth',
+        # model_path='../train/model_checkpoints/glaucoma_resnet50_best.pth',
+        image_path='../data/dataset2/disc-crop', 
+        test_csvs=['../data/dataset2/csvs/test.csv',],
+        base_model='resnet50',
+        # base_model='resnet18',
         image_size=224,
         batch_size=32
     )

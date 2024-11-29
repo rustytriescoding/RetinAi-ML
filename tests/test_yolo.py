@@ -56,11 +56,11 @@ def main():
     output_dir.mkdir(exist_ok=True)  
     
     visualizer = DiscVisualizer(
-        weights_path='../runs/detect/train/weights/best.pt',
+        weights_path='../models/yolo/retinai_yolo.pt',
         conf_threshold=0.5
     )
     
-    image_path = "../data/dataset1/raw/32_right.jpg"
+    image_path = "../data/dataset1/raw/7_right.jpg"
     output_path = output_dir / "yolo_output.jpg"
     
     _, detections = visualizer.visualize(image_path, output_path)

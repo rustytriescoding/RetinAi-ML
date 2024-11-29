@@ -2,7 +2,70 @@ import torch
 from torch.utils.data import Dataset
 import os
 import pandas as pd
+from pathlib import Path
 from PIL import Image
+
+class GlaucomaDataset3(Dataset):
+    def __init__(self, csv_path, base_dir, transform=None):
+        self.base_dir = base_dir
+        self.csv_path = csv_path
+        
+        self.df = pd.read_csv(self.csv_path)
+        self.transform = transform
+        
+        # Convert -1 (suspicious) to 1 (glaucoma)
+        self.df['types'] = self.df['types'].apply(lambda x: 1 if x == -1 else x)
+        
+        # Clean the fundus paths to only keep filename
+        self.df['fundus'] = self.df['fundus'].apply(lambda x: Path(x).name if isinstance(x, str) else x)
+        
+        # Drop NaN entries
+        self.df = self.df.dropna(subset=['fundus'])
+        
+        # Filter out missing images
+        valid_images = []
+        missing_count = 0
+        
+        for idx, row in self.df.iterrows():
+            full_path = os.path.join(self.base_dir, row['fundus'])
+            if os.path.exists(full_path):
+                try:
+                    # Try opening the image to verify it's valid
+                    with Image.open(full_path) as img:
+                        pass
+                    valid_images.append(idx)
+                except Exception as e:
+                    missing_count += 1
+                    print(f"Warning: Could not open image {full_path}: {e}")
+            else:
+                missing_count += 1
+        
+        # Keep only rows with valid images
+        self.df = self.df.iloc[valid_images].reset_index(drop=True)
+        
+        if missing_count > 0:
+            print(f"Warning: {missing_count} images were missing or invalid")
+            print(f"Proceeding with {len(self.df)} valid images")
+
+    def __len__(self):
+        return len(self.df)
+    
+    def __getitem__(self, index):
+        fundus_path = self.df['fundus'].iloc[index]
+        label = self.df['types'].iloc[index]
+        
+        full_path = os.path.join(self.base_dir, fundus_path)
+        image = Image.open(full_path).convert('RGB')
+            
+        if self.transform:
+            image = self.transform(image)
+            
+        label = torch.tensor(label, dtype=torch.float)
+        
+        return image, label
+
+    def get_labels(self):
+        return self.df['types'].values
 
 class GlaucomaDataset(Dataset):
     def __init__(self, csv_file, root_dir, transform=None, segment_dir=None):
@@ -47,4 +110,4 @@ class GlaucomaDataset(Dataset):
         label = self.df['glaucoma'][index]
         label = torch.tensor(label, dtype=torch.long)
         
-        return full_image, segment_image, label
+        return full_image, label

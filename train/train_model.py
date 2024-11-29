@@ -6,98 +6,54 @@ import torch.optim.lr_scheduler as lr_scheduler
 import torchvision.transforms as transforms
 import os
 import matplotlib.pyplot as plt
+import cv2
+import numpy as np
 from tqdm import tqdm
 import json
+from PIL import Image
 from datetime import datetime
 
 from sys import path
 path.append('../src')
-from glaucoma_dataset import GlaucomaDataset
+from glaucoma_dataset import GlaucomaDataset3
 from glaucoma_model import GlaucomaDiagnoser
-from resnet_glaucoma_model import ResNetGlaucomaDiagnoser
+from checkpoint_model import ModelCheckpointer
 
-class ModelCheckpointer:
-    def __init__(self, save_dir, model_name):
-        self.save_dir = save_dir
-        self.model_name = model_name
-        self.best_val_loss = float('inf')
-        self.best_epoch = -1
-        os.makedirs(save_dir, exist_ok=True)
-        
-        # Create a log file
-        self.log_file = os.path.join(save_dir, f"{model_name}_training_log.json")
-        self.training_history = []
+def apply_bilateral_filter(img, d=9, sigma_color=75, sigma_space=75):
+    img_np = np.array(img)
+    
+    filtered = cv2.bilateralFilter(img_np, d, sigma_color, sigma_space)
+    
+    return Image.fromarray(filtered)
 
-    def save_checkpoint(self, model, optimizer, scheduler, epoch, 
-                       train_loss, val_loss, metrics=None, params=None):
-        checkpoint = {
-            'epoch': epoch,
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'scheduler_state_dict': scheduler.state_dict() if scheduler else None,
-            'train_loss': train_loss,
-            'val_loss': val_loss,
-            'metrics': metrics,
-        }
+def apply_clahe_to_green(img, clip_limit=2.0, tile_grid_size=(8, 8)):
+    img_np = np.array(img)
+    green = img_np[:, :, 1]
+    clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_grid_size)
+    green_enhanced = clahe.apply(green)
+    enhanced = np.stack([green_enhanced, green_enhanced, green_enhanced], axis=2)
+    return Image.fromarray(enhanced.astype(np.uint8))
 
-        # Save latest checkpoint
-        latest_path = os.path.join(self.save_dir, f'{self.model_name}_latest.pth')
-        torch.save(checkpoint, latest_path)
+def apply_clahe(img, clip_limit=2.0, tile_grid_size=(8, 8)):
+    clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_grid_size)
+    img_np = np.array(img)
+    lab = cv2.cvtColor(img_np, cv2.COLOR_RGB2LAB)
+    l, a, b = cv2.split(lab)
+    l_clahe = clahe.apply(l)
+    lab = cv2.merge((l_clahe, a, b))
+    img_clahe = cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
+    
+    return Image.fromarray(img_clahe)
 
-        # Save best model
-        if val_loss < self.best_val_loss:
-            self.best_val_loss = val_loss
-            self.best_epoch = epoch
-            best_path = os.path.join(self.save_dir, f'{self.model_name}_best.pth')
-            print(f'Saving best model val loss {self.best_val_loss}')
-            torch.save(checkpoint, best_path)
-
-        # Save periodic checkpoint
-        if epoch % 10 == 0:
-            periodic_path = os.path.join(self.save_dir, f'{self.model_name}_epoch_{epoch}.pth')
-            torch.save(checkpoint, periodic_path)
-
-        # Log training info
-        log_entry = {
-            'epoch': epoch,
-            'train_loss': float(train_loss),
-            'val_loss': float(val_loss),
-            'learning_rate': optimizer.param_groups[0]['lr'],
-            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            'metrics': metrics,
-            'params': params,
-        }
-        self.training_history.append(log_entry)
-        
-        with open(self.log_file, 'w') as f:
-            json.dump(self.training_history, f, indent=4)
-
-    def load_checkpoint(self, model, optimizer=None, scheduler=None, checkpoint_path=None):
-        if checkpoint_path is None:
-            checkpoint_path = os.path.join(self.save_dir, f'{self.model_name}_latest.pth')
-        
-        if not os.path.exists(checkpoint_path):
-            print(f"No checkpoint found at {checkpoint_path}")
-            return 0
-
-        print('Loading checkpoint')
-        checkpoint = torch.load(checkpoint_path, weights_only=False)
-        model.load_state_dict(checkpoint['model_state_dict'])
-        
-        if optimizer and 'optimizer_state_dict' in checkpoint:
-            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        if scheduler and 'scheduler_state_dict' in checkpoint:
-            scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
-            
-        return checkpoint['epoch']
+def extract_green_channel(x):
+    return x[1].unsqueeze(0).repeat(3, 1, 1)
 
 class GlaucomaModelTrainer:
-    def __init__(self, train_csvs, val_csvs, image_paths, segment_paths=None, checkpoint_path=None, 
+    def __init__(self, train_csvs, val_csvs, image_paths, checkpoint_path=None, 
                  finetune_params=None, **kwargs):
         self.train_csvs = train_csvs
         self.val_csvs = val_csvs
         self.image_paths = image_paths
-        self.segment_paths = segment_paths or [None] * len(image_paths)  
         self.checkpoint_path = checkpoint_path
         self.class_weights = None
         
@@ -106,10 +62,10 @@ class GlaucomaModelTrainer:
             'batch_size': 32,
             'num_epochs': 100,
             'patience': 10,
-            'base_model': 'efficientnet_b0',
-            'lr': 0.0001,
-            'wd': 1e-5,
-            'dropout_rate': 0.2,
+            'base_model': 'resnet50',
+            'lr': 0.0001, 
+            'wd': 0.02,
+            'dropout_rate': 0.6,
             'image_size': 224,
         }
         
@@ -127,23 +83,42 @@ class GlaucomaModelTrainer:
             model_name=f"glaucoma_{self.params['base_model']}",
         )
 
+    
+
     def get_transforms(self, is_training=True):
-        if is_training:
-            return transforms.Compose([
+        base_transforms = [
             transforms.Resize((self.params['image_size'], self.params['image_size'])),
-            transforms.RandomHorizontalFlip(),
-            transforms.RandomVerticalFlip(),
-            transforms.RandomRotation(10),
-            transforms.ColorJitter(brightness=0.1, contrast=0.1),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-        ])
-        else:
-            return transforms.Compose([
-                transforms.Resize((self.params['image_size'], self.params['image_size'])),
-                transforms.ToTensor(),
-                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+            transforms.Grayscale(num_output_channels=3), #TRY GREY SCALE
+            transforms.Lambda(apply_clahe),
+            # transforms.Lambda(apply_clahe_to_green)
+        ]
+
+        if is_training:
+            base_transforms.extend([
+                transforms.RandomHorizontalFlip(),
+                # transforms.RandomVerticalFlip(),
+                transforms.RandomRotation(
+                    degrees=5,
+                    fill=0
+                ),
+                transforms.RandomAffine(
+                    degrees=0,
+                    shear=(-20, 20),
+                    scale=(0.8, 1.2),
+                    fill=0
+                ),
             ])
+
+        base_transforms.extend([
+            transforms.ToTensor(),
+            transforms.Lambda(extract_green_channel), # Extract only green channel
+            # transforms.Normalize(mean=[0.395, 0.395, 0.395], std=[0.181, 0.181, 0.181]) #green channel mean and std
+            # transforms.Normalize(mean=[0.653, 0.395, 0.217], std=[0.231, 0.182, 0.147]) # Color all 3 channels mean and std
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]) #image net mean and std
+            # transforms.Normalize(mean=[0.456, 0.456, 0.456], std=[0.224, 0.224, 0.224]) #image net mean and std gren
+        ])
+
+        return transforms.Compose(base_transforms)
 
     def setup_data(self):
         train_transform = self.get_transforms(is_training=True)
@@ -151,40 +126,41 @@ class GlaucomaModelTrainer:
 
         train_datasets, val_datasets = [], []
 
-        for train_csv, image_path, segment_path in zip(self.train_csvs, self.image_paths, self.segment_paths):
-            train_datasets.append(GlaucomaDataset(
+        for train_csv, image_path in zip(self.train_csvs, self.image_paths):
+            train_datasets.append(GlaucomaDataset3(
                 train_csv, 
                 image_path, 
                 transform=train_transform,
-                segment_dir=segment_path
             ))
 
-        for val_csv, image_path, segment_path in zip(self.val_csvs, self.image_paths, self.segment_paths):
-            val_datasets.append(GlaucomaDataset(
+        for val_csv, image_path in zip(self.val_csvs, self.image_paths):
+            val_datasets.append(GlaucomaDataset3(
                 val_csv, 
                 image_path, 
                 transform=val_transform,
-                segment_dir=segment_path
             ))
 
         train_dataset = torch.utils.data.ConcatDataset(train_datasets)
         val_dataset = torch.utils.data.ConcatDataset(val_datasets)
 
+        print('Train Dataset Length', len(train_dataset))
+        print('Validation Dataset Length', len(val_dataset))
+
         # train_labels = [train_dataset[i][2].item() for i in range(len(train_dataset))]
         # class_counts = torch.bincount(torch.tensor(train_labels))
         
         # self.class_weights = torch.tensor([class_counts[0] / class_counts[1]]).to(self.device)
-        self.class_weights = torch.tensor([7.26]).to(self.device)
+        self.class_weights = torch.tensor([1.58359555276]).to(self.device) # Hardcode weights to reduce compute time [7.26]
 
         # print(f"Class counts - Normal: {class_counts[0]}, Glaucoma: {class_counts[1]}")
-        print(f"Using positive class weight: {self.class_weights.item():.2f}")
+        print(f"Using positive class weight: {self.class_weights.item():.2f}") 
         
 
         self.train_loader = DataLoader(
             train_dataset, 
             batch_size=self.params['batch_size'],
             shuffle=True,
-            num_workers=4,
+            num_workers=2,
             pin_memory=True
         )
         
@@ -192,7 +168,7 @@ class GlaucomaModelTrainer:
             val_dataset,
             batch_size=self.params['batch_size'],
             shuffle=False,
-            num_workers=4,
+            num_workers=2,
             pin_memory=True
         )
 
@@ -200,8 +176,7 @@ class GlaucomaModelTrainer:
         self.model = GlaucomaDiagnoser(
             base_model=self.params['base_model'],
             dropout_rate=self.params['dropout_rate'],
-            freeze_segment_blocks=self.params['freeze_segment_blocks'],
-            freeze_full_blocks=self.params['freeze_full_blocks'],
+            freeze_blocks=self.params['freeze_blocks'],
         ).to(self.device)
 
         if self.checkpoint_path:
@@ -213,69 +188,72 @@ class GlaucomaModelTrainer:
         self.setup_model()
 
         criterion = nn.BCEWithLogitsLoss(pos_weight=self.class_weights)
+        # criterion = nn.BCEWithLogitsLoss()
         
         params = [
-            {'params': self.model.full_model.parameters(), 'lr': self.params['lr']},
-            {'params': self.model.segment_model.parameters(), 'lr': self.params['lr']},
+            {'params': self.model.model.parameters(), 'lr': self.params['lr']},
             {'params': self.model.classifier.parameters(), 'lr': self.params['lr']},
         ]
         
         optimizer = optim.AdamW(params, weight_decay=self.params['wd'])
+       
         
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer,
             mode='min',
-            factor=0.5, 
-            patience=4,   
+            factor=0.9, # 0.2
+            patience=2,   # 3
             min_lr=1e-6
         )
 
         scaler = torch.amp.GradScaler()
         best_val_loss = float('inf')
+        best_val_f1 = 0
         patience_counter = 0
         
         for epoch in range(self.params['num_epochs']):
             # Training phase
             self.model.train()
             train_loss = 0
-            correct = 0
-            total = 0
+            train_predictions = []
+            train_labels_list = []
             
-            for full_images, segment_images, labels in tqdm(self.train_loader, desc='Training Loop'):
+            for full_images, labels in tqdm(self.train_loader, desc='Training Loop'):
                 full_images = full_images.to(self.device)
-                segment_images = segment_images.to(self.device)
                 labels = labels.to(self.device).float()
                 
                 optimizer.zero_grad()
                 
                 with torch.amp.autocast(device_type='cuda'):
-                    outputs = self.model(full_images, segment_images)
+                    outputs = self.model(full_images)
                     outputs = outputs.squeeze(1)
                     loss = criterion(outputs, labels)
 
                 scaler.scale(loss).backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
                 
-                # Update optimizer first
                 scaler.step(optimizer)
                 scaler.update()
                 
                 train_loss += loss.item()
                 
-                # Calculate accuracy
+                # Calculate predictions
                 predicted = (torch.sigmoid(outputs) > 0.5).float()
-                total += labels.size(0)
-                correct += (predicted == labels).sum().item()
+                train_predictions.extend(predicted.cpu().numpy())
+                train_labels_list.extend(labels.cpu().numpy())
             
             train_loss = train_loss / len(self.train_loader)
-            train_acc = 100. * correct / total
+            
+            train_f1 = self.calculate_f1_score(train_predictions, train_labels_list)
             
             # Validation phase
             val_loss, metrics = self.validate()
+            val_f1 = metrics['f1']
             scheduler.step(val_loss)
             
             print(f'Epoch {epoch+1}:')
-            print(f'Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.2f}% Val Loss: {val_loss:.4f}, Val Acc: {metrics["accuracy"]:.2f}%')
+            print(f'Train Loss: {train_loss:.4f}, Train F1: {train_f1:.4f}')
+            print(f'Val Loss: {val_loss:.4f}, Val F1: {metrics["f1"]:.4f}')
             
             # Save checkpoint
             self.checkpointer.save_checkpoint(
@@ -285,6 +263,7 @@ class GlaucomaModelTrainer:
                 epoch=epoch,
                 train_loss=train_loss,
                 val_loss=val_loss,
+                val_f1=val_f1,
                 metrics=metrics,
                 params=self.params
             )
@@ -293,47 +272,65 @@ class GlaucomaModelTrainer:
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
                 patience_counter = 0
+            # Early stopping check using F1 score
+            # if val_f1 > best_val_f1:
+            #     best_val_f1 = val_f1
+            #     patience_counter = 0
             else:
                 patience_counter += 1
                 if patience_counter >= self.params['patience']:
-                    print(f'Early stopping triggered at epoch {epoch+1} Best loss {best_val_loss}')
+                    print(f'Early stopping triggered at epoch {epoch+1} Best F1 {best_val_f1} Best Val Loss {best_val_loss}')
                     break
     
 
     def validate(self):
         self.model.eval()
         val_loss = 0
-        correct = 0
-        total = 0
+        val_predictions = []
+        val_labels_list = []
         criterion = nn.BCEWithLogitsLoss(pos_weight=self.class_weights)
+        # criterion = nn.BCEWithLogitsLoss()
         
         with torch.no_grad():
-            for full_images, segment_images, labels in tqdm(self.val_loader, desc='Validation Loop'):
+            for full_images, labels in tqdm(self.val_loader, desc='Validation Loop'):
                 full_images = full_images.to(self.device)
-                segment_images = segment_images.to(self.device)
                 labels = labels.to(self.device).float()
                 
-                outputs = self.model(full_images, segment_images)
+                outputs = self.model(full_images)
                 outputs = outputs.squeeze(1)
                 loss = criterion(outputs, labels)
                 val_loss += loss.item()
                 
                 predicted = (torch.sigmoid(outputs) > 0.5).float()
-                total += labels.size(0)
-                correct += (predicted == labels).sum().item()
+                val_predictions.extend(predicted.cpu().numpy())
+                val_labels_list.extend(labels.cpu().numpy())
 
-        accuracy = 100. * correct / total
         val_loss = val_loss / len(self.val_loader)
+        val_f1 = self.calculate_f1_score(val_predictions, val_labels_list)
         
         metrics = {
-            'accuracy': accuracy,
+            'f1': val_f1,
             'val_loss': val_loss
         }
         
         return val_loss, metrics
+    
+    def calculate_f1_score(self, predictions, labels):
+        predictions = np.array(predictions)
+        labels = np.array(labels)
+        
+        true_positives = np.sum((predictions == 1) & (labels == 1))
+        predicted_positives = np.sum(predictions == 1)
+        actual_positives = np.sum(labels == 1)
+        
+        precision = true_positives / predicted_positives if predicted_positives > 0 else 0
+        recall = true_positives / actual_positives if actual_positives > 0 else 0
+        
+        f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
+        
+        return f1
 
     def plot_training_history(self, log_file=None):
-        # Create results directory
         results_dir = 'train_results'
         os.makedirs(results_dir, exist_ok=True)
         
@@ -345,26 +342,38 @@ class GlaucomaModelTrainer:
             with open(self.checkpointer.log_file, 'r') as f:
                 history = json.load(f)
         
-        # Create figure with two subplots - one for loss, one for parameters
-        fig = plt.figure(figsize=(15, 10))
+        fig = plt.figure(figsize=(20, 10)) 
         
-        # Loss plot
-        ax1 = plt.subplot(2, 1, 1)
+        gs = plt.GridSpec(2, 2, width_ratios=[2, 1], height_ratios=[1, 1], hspace=0.3)
+        
+        # Loss plot (top left)
+        ax1 = fig.add_subplot(gs[0, 0])
         epochs = [entry['epoch'] for entry in history]
         train_losses = [entry['train_loss'] for entry in history]
         val_losses = [entry['val_loss'] for entry in history]
         
         ax1.plot(epochs, train_losses, label='Training Loss')
         ax1.plot(epochs, val_losses, label='Validation Loss')
-        ax1.set_title('Training History')
+        ax1.set_title('Training and Validation Loss')
         ax1.set_xlabel('Epoch')
         ax1.set_ylabel('Loss')
         ax1.legend()
         ax1.grid(True)
         
-        # Parameters text
-        ax2 = plt.subplot(2, 1, 2)
-        ax2.axis('off')
+        # F1 score plot (bottom left)
+        ax2 = fig.add_subplot(gs[1, 0])
+        f1_scores = [entry['metrics']['f1'] for entry in history]
+        
+        ax2.plot(epochs, f1_scores, label='Validation F1 Score', color='green')
+        ax2.set_title('Validation F1 Score')
+        ax2.set_xlabel('Epoch')
+        ax2.set_ylabel('F1 Score')
+        ax2.legend()
+        ax2.grid(True)
+        
+        # Parameters text (right side, spans both rows)
+        ax3 = fig.add_subplot(gs[:, 1])
+        ax3.axis('off')
         
         # Get final metrics and parameters from history
         final_metrics = history[-1].get('metrics', {})
@@ -378,20 +387,18 @@ class GlaucomaModelTrainer:
         param_text += f"Batch Size: {params.get('batch_size', 'N/A')}\n"
         param_text += f"Dropout Rate: {params.get('dropout_rate', 'N/A')}\n"
         param_text += f"Image Size: {params.get('image_size', 'N/A')}\n"
-        param_text += f"Frozen Full Blocks: {params.get('freeze_full_blocks', 'N/A')}\n"
-        param_text += f"Frozen Segment Blocks: {params.get('freeze_segment_blocks', 'N/A')}\n\n"
+        param_text += f"Frozen Blocks: {params.get('freeze_blocks', 'N/A')}\n"
         
         param_text += "Final Results:\n"
         param_text += f"Best Validation Loss: {min([entry['val_loss'] for entry in history]):.4f}\n"
         param_text += f"Final Validation Loss: {history[-1]['val_loss']:.4f}\n"
-        param_text += f"Final Validation Accuracy: {final_metrics.get('accuracy', 'N/A')}\n"
+        param_text += f"Best F1 Score: {max([entry['metrics']['f1'] for entry in history]):.4f}\n"
+        param_text += f"Final F1 Score: {final_metrics.get('f1', 'N/A'):.4f}\n"
         param_text += f"Total Epochs: {len(epochs)}\n"
         
-        
-        ax2.text(0.1, 0.9, param_text, fontsize=10, verticalalignment='top', 
+        ax3.text(0.1, 0.9, param_text, fontsize=10, verticalalignment='top', 
                 family='monospace')
         
-        # Adjust layout and save
         plt.tight_layout()
         
         # Create unique filename with timestamp
@@ -403,7 +410,7 @@ class GlaucomaModelTrainer:
         plt.savefig(filename, dpi=300, bbox_inches='tight')
         print(f"Training results saved to {filename}")
         
-        # Also save parameters and metrics to JSON for easy reference
+        # Save parameters and metrics to JSON 
         results_dict = {
             'parameters': params,
             'training_history': history,
@@ -414,31 +421,82 @@ class GlaucomaModelTrainer:
         with open(json_filename, 'w') as f:
             json.dump(results_dict, f, indent=4)
         
-        # Show plot if in interactive environment
         plt.show()
 
 def main():
-    # Train model
-    print('First training model')
+   
+    # Best Val F1 0.8411 Val Loss 0.3699 Using resnet18, training at 0.0001 to failure, then trying again with 0.001
+    print('--- Phase 1 ---')
     trainer = GlaucomaModelTrainer(
-        train_csvs=['../data/dataset1/csvs/train.csv', '../data/dataset2/csvs/train.csv'],
-        val_csvs=['../data/dataset1/csvs/val.csv', '../data/dataset2/csvs/val.csv'],
-        image_paths=['../data/dataset1/processed', '../data/dataset2/processed'],
-        segment_paths=['../data/dataset1/segment', '../data/dataset2/segment'], 
-        batch_size=32,
+        train_csvs=['../data/dataset3/csvs/train.csv'],
+        val_csvs=['../data/dataset3/csvs/val.csv'],
+        image_paths=['../data/dataset3/disc-crop'], 
+        num_epochs=10,
+        patience=2,
+        base_model='efficientnet_b0',
+        wd=0.03, 
+        image_size=224,
+        freeze_blocks=6,
+        dropout_rate=0.2,
+        lr=0.0001, 
+    )
+    trainer.train()
+
+    print('--- Phase 2 ---')
+    trainer = GlaucomaModelTrainer(
+        train_csvs=['../data/dataset3/csvs/train.csv'],
+        val_csvs=['../data/dataset3/csvs/val.csv'],
+        image_paths=['../data/dataset3/disc-crop'], 
+        num_epochs=100,
+        patience=2,
+        base_model='efficientnet_b0',
+        wd=0.03, 
+        image_size=224,
+        freeze_blocks=3,
+        dropout_rate=0.5,
+        lr=0.0001,
+        checkpoint_path='model_checkpoints/glaucoma_efficientnet_b0_latest.pth' 
+    )
+    trainer.train()
+
+    print('--- Phase 3 ---')
+    trainer = GlaucomaModelTrainer(
+        train_csvs=['../data/dataset3/csvs/train.csv'],
+        val_csvs=['../data/dataset3/csvs/val.csv'],
+        image_paths=['../data/dataset3/disc-crop'], 
         num_epochs=100,
         patience=5,
         base_model='efficientnet_b0',
-        lr=0.00001,
-        wd=0.01,
+        wd=0.05, 
         image_size=224,
-        freeze_full_blocks=5,
-        freeze_segment_blocks=4,
-        dropout_rate=0.2,
+        freeze_blocks=0,
+        dropout_rate=0.6,
+        lr=0.0002, 
+        checkpoint_path='model_checkpoints/glaucoma_efficientnet_b0_latest.pth' 
     )
     trainer.train()
     trainer.plot_training_history()
-    # trainer.plot_training_history('model_checkpoints/glaucoma_efficientnet_b0_training_log.json')
+
+    # trainer = GlaucomaModelTrainer(
+    #     train_csvs=['../data/dataset3/csvs/train.csv'],
+    #     val_csvs=['../data/dataset3/csvs/val.csv'],
+    #     image_paths=['../data/dataset3/disc-crop'], 
+    #     num_epochs=100,
+    #     patience=5,
+    #     base_model='mobilenetv3_small_100',
+    #     wd=0.03, 
+    #     image_size=224,
+    #     freeze_blocks=10,
+    #     dropout_rate=0.2,
+    #     lr=0.0001,
+    #     # checkpoint_path='model_checkpoints/glaucoma_mobilenetv3_small_100_best.pth' 
+    #     # checkpoint_path='../models/resnet50/glaucoma_resnet18_best.pth'
+    # )
+    # trainer.train()
+    # trainer.plot_training_history()
+    # resnet50_trainer.plot_training_history('model_checkpoints/glaucoma_resnet50_training_log.json')
+
 
 if __name__ == '__main__':
     main()
+    

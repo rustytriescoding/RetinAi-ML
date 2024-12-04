@@ -13,11 +13,11 @@ import os
 
 from sys import path
 path.append('../src')
-from glaucoma_dataset import GlaucomaDataset
+from glaucoma_dataset import GlaucomaDataset, GlaucomaDataset3
 from glaucoma_model import GlaucomaDiagnoser
 
-# def extract_green_channel(x):
-#     return x[1].unsqueeze(0).repeat(3, 1, 1)
+def extract_green_channel(x):
+    return x[1:2, :, :] 
 
 class GlaucomaModelTester:
     def __init__(self, model_path, image_path, test_csvs, base_model='resnet50', 
@@ -48,13 +48,14 @@ class GlaucomaModelTester:
         self.transform = transforms.Compose([
             transforms.Resize((self.image_size, self.image_size)),
             transforms.ToTensor(),
-            # transforms.Lambda(extract_green_channel), 
+            transforms.Lambda(extract_green_channel), 
             # transforms.Normalize(mean=[0.395, 0.395, 0.395], std=[0.182, 0.182, 0.182]) 
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]) # Image net
+            transforms.Normalize(mean=[0.456], std=[0.224])
         ])
 
     def test_model(self, csv_path):
-        dataset = GlaucomaDataset(
+        dataset = GlaucomaDataset3(
+        # dataset = GlaucomaDataset(
             csv_path, 
             self.image_path, 
             self.transform,
@@ -176,13 +177,15 @@ class GlaucomaModelTester:
 
 def main():
     tester = GlaucomaModelTester(
-        # model_path='../train/model_checkpoints/glaucoma_efficientnet_b0_best.pth',
-        model_path='../train/model_checkpoints/glaucoma_resnet50_best.pth',
+        # model_path='../models/mobilenetv3/mobilenetv3_94.pth',
+        model_path='../train/model_checkpoints/glaucoma_tf_mobilenetv3_small_100_best.pth',
         # model_path='../train/model_checkpoints/glaucoma_resnet50_best.pth',
-        image_path='../data/dataset2/disc-crop', 
-        test_csvs=['../data/dataset2/csvs/test.csv',],
-        base_model='resnet50',
-        # base_model='resnet18',
+        # model_path='../models/resnet50/resnet50_89.pth',
+        image_path='../data/dataset4/disc-crop', 
+        test_csvs=['../data/dataset4/csvs/test.csv',],
+        # base_model='resnet50',
+        base_model='tf_mobilenetv3_small_100',
+        # image_size=256,
         image_size=224,
         batch_size=32
     )

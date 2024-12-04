@@ -165,7 +165,7 @@ def main():
     # dataset3Tools.split_csv(train_split=0.8)
 
     dataset4Tools = CsvTools(dataset_csv='../dataset4/csvs/dataset4.csv', save_dir='../dataset4/csvs')
-    dataset4Tools.split_csv(train_split=0.8)
+    dataset4Tools.split_csv(train_split=0.8, test_split=0.5)
     
     # # Add YOLO dataset creation
     # dataset3Tools.create_yolo_csvs(train_split=0.8)

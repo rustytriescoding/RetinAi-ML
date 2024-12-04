@@ -18,36 +18,20 @@ path.append('../src')
 from glaucoma_dataset import GlaucomaDataset3
 from glaucoma_model import GlaucomaDiagnoser
 from checkpoint_model import ModelCheckpointer
-
-def apply_bilateral_filter(img, d=9, sigma_color=75, sigma_space=75):
-    img_np = np.array(img)
+            
+def visualize_image(dataset, index=0):
+    import matplotlib.pyplot as plt
     
-    filtered = cv2.bilateralFilter(img_np, d, sigma_color, sigma_space)
+    image, _ = dataset[index]
     
-    return Image.fromarray(filtered)
-
-def apply_clahe_to_green(img, clip_limit=2.0, tile_grid_size=(8, 8)):
-    img_np = np.array(img)
-    green = img_np[:, :, 1]
-    clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_grid_size)
-    green_enhanced = clahe.apply(green)
-    enhanced = np.stack([green_enhanced, green_enhanced, green_enhanced], axis=2)
-    return Image.fromarray(enhanced.astype(np.uint8))
-
-def apply_clahe(img, clip_limit=2.0, tile_grid_size=(8, 8)):
-    clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_grid_size)
-    img_np = np.array(img)
-    lab = cv2.cvtColor(img_np, cv2.COLOR_RGB2LAB)
-    l, a, b = cv2.split(lab)
-    l_clahe = clahe.apply(l)
-    lab = cv2.merge((l_clahe, a, b))
-    img_clahe = cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
-    
-    return Image.fromarray(img_clahe)
+    plt.figure(figsize=(5, 5))
+    plt.imshow(image.squeeze(), cmap='gray')
+    plt.title('Input Image')
+    plt.axis('off')
+    plt.show()
 
 def extract_green_channel(x):
-    # return x[1].unsqueeze(0).repeat(3, 1, 1)
-    return x[1].unsqueeze(0)
+    return x[1:2, :, :] 
 
 class GlaucomaModelTrainer:
     def __init__(self, train_csvs, val_csvs, image_paths, checkpoint_path=None, 
@@ -60,7 +44,7 @@ class GlaucomaModelTrainer:
         
         # Default parameters
         self.default_params = {
-            'batch_size': 32,
+            'batch_size': 32, #32
             'num_epochs': 100,
             'patience': 10,
             'base_model': 'resnet50',
@@ -84,40 +68,26 @@ class GlaucomaModelTrainer:
             model_name=f"glaucoma_{self.params['base_model']}",
         )
 
-    
 
     def get_transforms(self, is_training=True):
         base_transforms = [
             transforms.Resize((self.params['image_size'], self.params['image_size'])),
-            # transforms.ToTensor(),
-            # transforms.Lambda(lambda x: x[1].unsqueeze(0)),  # Extract green channel and keep single channel
-            # transforms.Normalize(mean=[0.456], std=[0.224])  # Single channel normalization
         ]
 
         if is_training:
             base_transforms.extend([
                 transforms.RandomHorizontalFlip(),
-                # transforms.RandomVerticalFlip(),
+                transforms.RandomVerticalFlip(),
                 transforms.RandomRotation(
-                    degrees=5,
-                    fill=0
-                ),
-                transforms.RandomAffine(
-                    degrees=0,
-                    shear=(-20, 20),
-                    scale=(0.8, 1.2),
+                    degrees=45, #5
                     fill=0
                 ),
             ])
 
         base_transforms.extend([
             transforms.ToTensor(),
-            transforms.Lambda(extract_green_channel), # Extract only green channel
-            # transforms.Normalize(mean=[0.395, 0.395, 0.395], std=[0.181, 0.181, 0.181]) #green channel mean and std
-            # transforms.Normalize(mean=[0.653, 0.395, 0.217], std=[0.231, 0.182, 0.147]) # Color all 3 channels mean and std
-            # transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]) #image net mean and std
-            transforms.Normalize(mean=[0.456], std=[0.224]) #image net mean and std
-            # transforms.Normalize(mean=[0.456, 0.456, 0.456], std=[0.224, 0.224, 0.224]) #image net mean and std gren
+            transforms.Lambda(extract_green_channel), 
+            transforms.Normalize(mean=[0.456], std=[0.224]) 
         ])
 
         return transforms.Compose(base_transforms)
@@ -144,7 +114,7 @@ class GlaucomaModelTrainer:
 
         train_dataset = torch.utils.data.ConcatDataset(train_datasets)
         val_dataset = torch.utils.data.ConcatDataset(val_datasets)
-
+        # visualize_image(val_dataset, 0) #REMOVE
         print('Train Dataset Length', len(train_dataset))
         print('Validation Dataset Length', len(val_dataset))
 
@@ -152,10 +122,10 @@ class GlaucomaModelTrainer:
         # class_counts = torch.bincount(torch.tensor(train_labels))
         # print('Weight:', class_counts[0] / class_counts[1])
         # self.class_weights = torch.tensor([class_counts[0] / class_counts[1]]).to(self.device)
-        self.class_weights = torch.tensor([1.6209]).to(self.device) # Hardcode weights to reduce compute time [7.26]
+        # self.class_weights = torch.tensor([1.6209]).to(self.device) # Hardcode weights to reduce compute time [7.26]
 
         # print(f"Class counts - Normal: {class_counts[0]}, Glaucoma: {class_counts[1]}")
-        print(f"Using positive class weight: {self.class_weights.item():.2f}") 
+        # print(f"Using positive class weight: {self.class_weights.item():.2f}") 
         
 
         self.train_loader = DataLoader(
@@ -189,8 +159,8 @@ class GlaucomaModelTrainer:
         self.setup_data()
         self.setup_model()
 
-        criterion = nn.BCEWithLogitsLoss(pos_weight=self.class_weights)
-        # criterion = nn.BCEWithLogitsLoss()
+        # criterion = nn.BCEWithLogitsLoss(pos_weight=self.class_weights)
+        criterion = nn.BCEWithLogitsLoss()
         
         params = [
             {'params': self.model.model.parameters(), 'lr': self.params['lr']},
@@ -203,9 +173,9 @@ class GlaucomaModelTrainer:
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer,
             mode='min',
-            factor=0.9, # 0.2
-            patience=2,   # 3
-            min_lr=1e-6
+            factor=0.2, # 0.2
+            patience=3,   # 3
+            min_lr=0.0000001
         )
 
         scaler = torch.amp.GradScaler()
@@ -275,8 +245,8 @@ class GlaucomaModelTrainer:
                 best_val_loss = val_loss
                 patience_counter = 0
             # Early stopping check using F1 score
-            # if val_f1 > best_val_f1:
-            #     best_val_f1 = val_f1
+            if val_f1 > best_val_f1:
+                best_val_f1 = val_f1
             #     patience_counter = 0
             else:
                 patience_counter += 1
@@ -290,8 +260,8 @@ class GlaucomaModelTrainer:
         val_loss = 0
         val_predictions = []
         val_labels_list = []
-        criterion = nn.BCEWithLogitsLoss(pos_weight=self.class_weights)
-        # criterion = nn.BCEWithLogitsLoss()
+        # criterion = nn.BCEWithLogitsLoss(pos_weight=self.class_weights)
+        criterion = nn.BCEWithLogitsLoss()
         
         with torch.no_grad():
             for full_images, labels in tqdm(self.val_loader, desc='Validation Loop'):
@@ -425,59 +395,79 @@ class GlaucomaModelTrainer:
         
         plt.show()
 
-def main():
-   
-    # Best Val F1 0.8411 Val Loss 0.3699 Using resnet18, training at 0.0001 to failure, then trying again with 0.001
-    # print('--- Phase 1 ---')
-    # trainer = GlaucomaModelTrainer(
-    #     train_csvs=['../data/dataset3/csvs/train.csv'],
-    #     val_csvs=['../data/dataset3/csvs/val.csv'],
-    #     image_paths=['../data/dataset3/disc-crop'], 
-    #     num_epochs=10,
-    #     patience=2,
-    #     base_model='efficientnet_b0',
-    #     wd=0.03, 
-    #     image_size=224,
-    #     freeze_blocks=6,
-    #     dropout_rate=0.2,
-    #     lr=0.0001, 
-    # )
-    # trainer.train()
+def phase_train_resnet50():
+    print('--- Phase 1 Custom Classifier Layer ---')
+    trainer = GlaucomaModelTrainer(
+        train_csvs=['../data/dataset3/csvs/train.csv', '../data/dataset4/csvs/train.csv'],
+        val_csvs=['../data/dataset3/csvs/val.csv', '../data/dataset4/csvs/val.csv'],
+        image_paths=['../data/dataset3/disc-crop', '../data/dataset4/disc-crop'], 
+        num_epochs=100,
+        patience=3,
+        base_model='resnet50',
+        wd=0.1, 
+        image_size=224,
+        freeze_blocks=4,
+        dropout_rate=0.3,
+        lr=0.0001, 
+    )
+    trainer.train()
 
-    # print('--- Phase 2 ---')
-    # trainer = GlaucomaModelTrainer(
-    #     train_csvs=['../data/dataset3/csvs/train.csv'],
-    #     val_csvs=['../data/dataset3/csvs/val.csv'],
-    #     image_paths=['../data/dataset3/disc-crop'], 
-    #     num_epochs=100,
-    #     patience=2,
-    #     base_model='efficientnet_b0',
-    #     wd=0.03, 
-    #     image_size=224,
-    #     freeze_blocks=3,
-    #     dropout_rate=0.5,
-    #     lr=0.0001,
-    #     checkpoint_path='model_checkpoints/glaucoma_efficientnet_b0_latest.pth' 
-    # )
-    # trainer.train()
 
-    # print('--- Phase 3 ---')
-    # trainer = GlaucomaModelTrainer(
-    #     train_csvs=['../data/dataset3/csvs/train.csv'],
-    #     val_csvs=['../data/dataset3/csvs/val.csv'],
-    #     image_paths=['../data/dataset3/disc-crop'], 
-    #     num_epochs=100,
-    #     patience=5,
-    #     base_model='efficientnet_b0',
-    #     wd=0.05, 
-    #     image_size=224,
-    #     freeze_blocks=0,
-    #     dropout_rate=0.6,
-    #     lr=0.0002, 
-    #     checkpoint_path='model_checkpoints/glaucoma_efficientnet_b0_latest.pth' 
-    # )
-    # trainer.train()
+    print('--- Phase 2 All layers ---')
+    trainer = GlaucomaModelTrainer(
+        train_csvs=['../data/dataset3/csvs/train.csv', '../data/dataset4/csvs/train.csv'],
+        val_csvs=['../data/dataset3/csvs/val.csv', '../data/dataset4/csvs/val.csv'],
+        image_paths=['../data/dataset3/disc-crop', '../data/dataset4/disc-crop'], 
+        num_epochs=100,
+        patience=5,
+        base_model='resnet50',
+        wd=0.1, 
+        image_size=224,
+        freeze_blocks=0,
+        dropout_rate=0.6,
+        lr=0.0001, 
+        checkpoint_path='model_checkpoints/glaucoma_resnet50_best.pth' 
+    )
+    trainer.train()
+
+def phase_train_mobilenetv3():
+    print('--- Phase 1 Custom Classifier Layer ---')
+    trainer = GlaucomaModelTrainer(
+        train_csvs=['../data/dataset3/csvs/train.csv', '../data/dataset4/csvs/train.csv'],
+        val_csvs=['../data/dataset3/csvs/val.csv', '../data/dataset4/csvs/val.csv'],
+        image_paths=['../data/dataset3/disc-crop', '../data/dataset4/disc-crop'], 
+        num_epochs=100,
+        patience=3,
+        base_model='tf_mobilenetv3_small_100',
+        wd=0.1, 
+        image_size=224,
+        freeze_blocks=7,
+        dropout_rate=0.3,
+        lr=0.0001, 
+    )
+    trainer.train()
+
+    print('--- Phase 2 All Layers ---')
+    trainer = GlaucomaModelTrainer(
+        train_csvs=['../data/dataset3/csvs/train.csv', '../data/dataset4/csvs/train.csv'],
+        val_csvs=['../data/dataset3/csvs/val.csv', '../data/dataset4/csvs/val.csv'],
+        image_paths=['../data/dataset3/disc-crop', '../data/dataset4/disc-crop'], 
+        num_epochs=100,
+        patience=5,
+        base_model='tf_mobilenetv3_small_100',
+        wd=0.1, 
+        image_size=224,
+        freeze_blocks=0,
+        dropout_rate=0.6,
+        lr=0.00005, 
+        checkpoint_path='model_checkpoints/glaucoma_tf_mobilenetv3_small_100_best.pth' 
+    )
+    trainer.train()
     # trainer.plot_training_history()
+
+def main():
+    # phase_train_resnet50()
+    # phase_train_mobilenetv3()
 
     trainer = GlaucomaModelTrainer(
         train_csvs=['../data/dataset3/csvs/train.csv', '../data/dataset4/csvs/train.csv'],
@@ -485,12 +475,16 @@ def main():
         image_paths=['../data/dataset3/disc-crop', '../data/dataset4/disc-crop'], 
         num_epochs=100,
         patience=5,
-        base_model='efficientnet_b0',
-        wd=0.2, 
+        # base_model='resnet50',
+        base_model='tf_mobilenetv3_small_100',
+        wd=0.15, 
         image_size=224,
-        freeze_blocks=1,
-        dropout_rate=0.6,
+        freeze_blocks=0,
+        dropout_rate=0.4,
         lr=0.0001, 
+        # checkpoint_path='model_checkpoints/glaucoma_resnet50_best.pth' 
+        # checkpoint_path='model_checkpoints/glaucoma_tf_mobilenetv3_small_100_best.pth' 
+        checkpoint_path='model_checkpoints/mobilenetv3_94.pth' 
     )
     trainer.train()
     trainer.plot_training_history()

@@ -13,12 +13,15 @@ import os
 
 from sys import path
 path.append('../src')
-from glaucoma_dataset import GlaucomaDataset
+from glaucoma_dataset import GlaucomaDataset, GlaucomaDataset3
 from glaucoma_model import GlaucomaDiagnoser
 
+def extract_green_channel(x):
+    return x[1:2, :, :] 
+
 class GlaucomaModelTester:
-    def __init__(self, model_path, image_path, test_csvs, base_model='efficientnet_b0', 
-                 image_size=256, batch_size=32):
+    def __init__(self, model_path, image_path, test_csvs, base_model='resnet50', 
+                 image_size=224, batch_size=32):
         self.model_path = model_path
         self.image_path = image_path
         self.test_csvs = test_csvs
@@ -35,10 +38,9 @@ class GlaucomaModelTester:
         self.setup_transforms()
 
     def setup_model(self):
-        self.model = GlaucomaDiagnoser(num_classes=2, base_model=self.base_model)
+        self.model = GlaucomaDiagnoser(base_model=self.base_model)
         checkpoint = torch.load(self.model_path, map_location=self.device, weights_only=False)
         self.model.load_state_dict(checkpoint['model_state_dict'])
-        # self.model.load_state_dict(torch.load(self.model_path, weights_only=False))
         self.model.to(self.device)
         self.model.eval()
 
@@ -46,11 +48,19 @@ class GlaucomaModelTester:
         self.transform = transforms.Compose([
             transforms.Resize((self.image_size, self.image_size)),
             transforms.ToTensor(),
-            transforms.Normalize([0.21161936893269484, 0.0762942479204578, 0.02436706896535593], [0.1694396363130937, 0.07732758785821338, 0.02954764478795169])
+            transforms.Lambda(extract_green_channel), 
+            # transforms.Normalize(mean=[0.395, 0.395, 0.395], std=[0.182, 0.182, 0.182]) 
+            transforms.Normalize(mean=[0.456], std=[0.224])
         ])
 
     def test_model(self, csv_path):
-        dataset = GlaucomaDataset(csv_path, self.image_path, self.transform)
+        dataset = GlaucomaDataset3(
+        # dataset = GlaucomaDataset(
+            csv_path, 
+            self.image_path, 
+            self.transform,
+        )
+        
         loader = DataLoader(
             dataset, 
             batch_size=self.batch_size, 
@@ -64,11 +74,14 @@ class GlaucomaModelTester:
         all_probabilities = []
 
         with torch.no_grad():
-            for images, labels in tqdm(loader, desc=f"Testing {os.path.basename(csv_path)}"):
-                images, labels = images.to(self.device), labels.to(self.device)
-                outputs = self.model(images)
-                probabilities = torch.softmax(outputs, dim=1)
-                _, predicted = torch.max(outputs.data, 1)
+            for full_images, labels in tqdm(loader, desc=f"Testing {os.path.basename(csv_path)}"):
+                full_images = full_images.to(self.device)
+                labels = labels.to(self.device)
+                
+                outputs = self.model(full_images)
+                outputs = outputs.squeeze(1)  # Remove the extra dimension
+                probabilities = torch.sigmoid(outputs)  # Use sigmoid for binary classification
+                predicted = (outputs > 0).float()  # Convert logits to binary predictions
 
                 all_predictions.extend(predicted.cpu().numpy())
                 all_labels.extend(labels.cpu().numpy())
@@ -89,7 +102,7 @@ class GlaucomaModelTester:
         plt.close()
 
     def plot_roc_curve(self, y_true, y_prob, title, save_path):
-        fpr, tpr, _ = roc_curve(y_true, y_prob[:, 1])
+        fpr, tpr, _ = roc_curve(y_true, y_prob)
         roc_auc = auc(fpr, tpr)
 
         plt.figure(figsize=(8, 6))
@@ -114,7 +127,7 @@ class GlaucomaModelTester:
         
         for csv_path in self.test_csvs:
             test_name = os.path.basename(csv_path).split('.')[0]
-            print(f"\nTesting on {test_name}")
+            print(f'Starting testing {self.model_path}')
             
             # Run predictions
             predictions, labels, probabilities = self.test_model(csv_path)
@@ -163,16 +176,17 @@ class GlaucomaModelTester:
         return test_results
 
 def main():
-    test_csvs = [
-        '../data/dataset1/csvs/test.csv',
-    ]
-
     tester = GlaucomaModelTester(
-        model_path='../train/model_checkpoints/glaucoma_efficientnet_b0_best.pth',
-        image_path='../data/dataset1/processed',
-        test_csvs=test_csvs,
-        base_model='efficientnet_b0',
-        image_size=256,
+        # model_path='../models/mobilenetv3/mobilenetv3_94.pth',
+        model_path='../train/model_checkpoints/glaucoma_tf_mobilenetv3_small_100_best.pth',
+        # model_path='../train/model_checkpoints/glaucoma_resnet50_best.pth',
+        # model_path='../models/resnet50/resnet50_89.pth',
+        image_path='../data/dataset4/disc-crop', 
+        test_csvs=['../data/dataset4/csvs/test.csv',],
+        # base_model='resnet50',
+        base_model='tf_mobilenetv3_small_100',
+        # image_size=256,
+        image_size=224,
         batch_size=32
     )
     

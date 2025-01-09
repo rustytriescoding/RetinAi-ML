@@ -4,14 +4,18 @@ venv/
 # Data
 data/dataset1
 data/dataset2
+data/dataset3
+data/dataset4
 
 # Models
 models/
 train/model_checkpoints
+train/train_results
 
 # Test results
 tests/test_results
-
+tests/yolo_test_results
+runs/
 # Misc
 __pycache__/
 .vscode

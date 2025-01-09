@@ -124,12 +124,52 @@ class CsvTools():
             df = df[df['labels'] == f"['{label}']"]
             df.to_csv(os.path.join(self.save_dir, f'split_100_{label}.csv'), index=False)
 
-def main():
-    dataset1Tools = CsvTools(dataset_csv='../dataset1/csvs/dataset1.csv', save_dir='../dataset1/csvs')
-    dataset1Tools.split_csv(train_split=0.7, test_split=0.5, csv='../dataset1/csvs/dataset1_clean.csv')
+    def create_yolo_csvs(self, input_csv=None, train_split=0.8):
+        if not input_csv:
+            input_csv = self.dataset_csv
 
-    dataset2Tools = CsvTools(dataset_csv='../dataset2/csvs/dataset2.csv', save_dir='../dataset2/csvs')
-    dataset2Tools.split_csv(train_split=0.8)
+        df = pd.read_csv(input_csv)
+        print(f"Original dataset size: {len(df)} rows")
+
+        df_with_seg = df[df['fundus_od_seg'].notna()].copy()
+        print(f"Filtered dataset size (with segmentation masks): {len(df_with_seg)} rows")
+
+        if len(df_with_seg) == 0:
+            raise ValueError("No rows found with segmentation masks!")
+
+        train_df, val_df = train_test_split(
+            df_with_seg, 
+            train_size=train_split,
+            random_state=42  
+        )
+
+        yolo_train_path = os.path.join(self.save_dir, 'yolo_train.csv')
+        yolo_val_path = os.path.join(self.save_dir, 'yolo_val.csv')
+
+        train_df.to_csv(yolo_train_path, index=False)
+        val_df.to_csv(yolo_val_path, index=False)
+
+        print(f"\nCreated YOLO dataset CSVs:")
+        print(f"Training set: {len(train_df)} images -> {yolo_train_path}")
+        print(f"Validation set: {len(val_df)} images -> {yolo_val_path}")
+
+
+def main():
+    # dataset1Tools = CsvTools(dataset_csv='../dataset1/csvs/dataset1.csv', save_dir='../dataset1/csvs')
+    # dataset1Tools.split_csv(train_split=0.7, test_split=0.5, csv='../dataset1/csvs/dataset1_clean.csv')
+
+    # dataset2Tools = CsvTools(dataset_csv='../dataset2/csvs/dataset2.csv', save_dir='../dataset2/csvs')
+    # dataset2Tools.split_csv(train_split=0.01, test_split=0.01)
+
+    # dataset3Tools = CsvTools(dataset_csv='../dataset3/csvs/dataset3.csv', save_dir='../dataset3/csvs')
+    # dataset3Tools.split_csv(train_split=0.8)
+
+    dataset4Tools = CsvTools(dataset_csv='../dataset4/csvs/dataset4.csv', save_dir='../dataset4/csvs')
+    dataset4Tools.split_csv(train_split=0.8, test_split=0.5)
+    
+    # # Add YOLO dataset creation
+    # dataset3Tools.create_yolo_csvs(train_split=0.8)
+    
 
 if __name__ == '__main__':
     main()
